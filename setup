@@ -18,6 +18,52 @@ NC='\033[0m'
 MD_MARKER="<!-- source: ai-coding-setup -->"
 TOML_MARKER="# source: ai-coding-setup"
 
+# ---- read-only permission sets --------------------------------------------
+# Only commands that have NO write/destructive mode, even with flags.
+# Excluded: find (-delete), sed (-i), awk (print>"file"), gh api (POST/DELETE),
+#           git branch/tag/stash/remote (destructive subcommands).
+
+READONLY_COMMANDS=(
+    # Git read-only
+    "git status" "git log" "git diff" "git show" "git blame"
+    "git ls-files" "git ls-tree" "git ls-remote"
+    "git rev-parse" "git cat-file" "git shortlog" "git describe"
+    # GitHub CLI read-only
+    "gh pr view" "gh pr list" "gh pr diff" "gh pr checks" "gh pr status"
+    "gh issue view" "gh issue list" "gh issue status"
+    "gh repo view" "gh repo list"
+    "gh run view" "gh run list"
+    "gh workflow view" "gh workflow list"
+    "gh search"
+    # File inspection
+    "cat" "head" "tail" "file" "stat" "wc"
+    "ls" "tree" "du" "diff" "shasum"
+    # Text processing
+    "grep" "sort" "uniq" "cut" "tr" "jq"
+    # System info
+    "uname" "which" "command -v" "sw_vers"
+    "env" "printenv" "date" "ps" "id" "df"
+)
+
+# Generate tool-specific permission arrays from the shared command list.
+CLAUDE_READONLY_PERMS=()
+for _cmd in "${READONLY_COMMANDS[@]}"; do
+    CLAUDE_READONLY_PERMS+=("Bash($_cmd *)")
+done
+
+GEMINI_READONLY_BUILTINS=(
+    "read_file"
+    "read_many_files"
+    "glob"
+    "grep_search"
+    "list_directory"
+)
+
+GEMINI_READONLY_SHELL=()
+for _cmd in "${READONLY_COMMANDS[@]}"; do
+    GEMINI_READONLY_SHELL+=("run_shell_command($_cmd)")
+done
+
 # ---- helpers --------------------------------------------------------------
 
 print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -67,6 +113,27 @@ is_up_to_date() {
     local expected
     expected=$(cat "$src"; printf '\n%s\n' "$marker")
     [[ "$expected" == "$(cat "$dest")" ]]
+}
+
+# Categorise raw command names and display a grouped summary.
+# Usage: display_permission_summary "cmd1" "cmd2" ...
+display_permission_summary() {
+    local git_cmds=() gh_cmds=() file_cmds=() text_cmds=() sys_cmds=()
+    for cmd in "$@"; do
+        case "$cmd" in
+            git\ *)     git_cmds+=("${cmd#git }") ;;
+            gh\ *)      gh_cmds+=("${cmd#gh }") ;;
+            grep|sort|uniq|cut|tr|jq) text_cmds+=("$cmd") ;;
+            uname|which|command\ *|sw_vers|env|printenv|date|ps|id|df) sys_cmds+=("$cmd") ;;
+            *)          file_cmds+=("$cmd") ;;
+        esac
+    done
+
+    [[ ${#git_cmds[@]} -gt 0 ]]  && echo -e "    ${BOLD}Git (${#git_cmds[@]}):${NC} ${git_cmds[*]}"
+    [[ ${#gh_cmds[@]} -gt 0 ]]   && echo -e "    ${BOLD}GitHub CLI (${#gh_cmds[@]}):${NC} ${gh_cmds[*]}"
+    [[ ${#file_cmds[@]} -gt 0 ]] && echo -e "    ${BOLD}File (${#file_cmds[@]}):${NC} ${file_cmds[*]}"
+    [[ ${#text_cmds[@]} -gt 0 ]] && echo -e "    ${BOLD}Text (${#text_cmds[@]}):${NC} ${text_cmds[*]}"
+    [[ ${#sys_cmds[@]} -gt 0 ]]  && echo -e "    ${BOLD}System (${#sys_cmds[@]}):${NC} ${sys_cmds[*]}"
 }
 
 # ---- generic install function ----------------------------------------------
@@ -190,6 +257,232 @@ install_commands() {
     echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
 }
 
+# ---- Claude Code settings configuration ------------------------------------
+
+configure_claude_settings() {
+    local settings_file="$HOME/.claude/settings.json"
+
+    echo ""
+    echo -e "${BOLD}── Claude Code Settings ──${NC}"
+
+    mkdir -p "$HOME/.claude"
+    if [[ ! -f "$settings_file" ]]; then
+        echo '{}' > "$settings_file"
+    fi
+
+    if ! jq empty "$settings_file" 2>/dev/null; then
+        print_warning "$HOME/.claude/settings.json is not valid JSON — skipping"
+        return
+    fi
+
+    local settings updated
+    settings=$(cat "$settings_file")
+    updated="$settings"
+    local changed=false
+
+    # ── Check feature settings ──────────────────────────────────
+    local feature_changes=()
+
+    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebFetch")' &>/dev/null; then
+        feature_changes+=("webfetch")
+    fi
+    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebSearch")' &>/dev/null; then
+        feature_changes+=("websearch")
+    fi
+    if ! echo "$settings" | jq -e '.attribution' &>/dev/null; then
+        feature_changes+=("attribution")
+    fi
+    if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
+        feature_changes+=("teams")
+    fi
+
+    # ── Check read-only permissions (batch jq, handles legacy :* format) ──
+    local perms_json
+    perms_json=$(printf '%s\n' "${CLAUDE_READONLY_PERMS[@]}" | jq -R . | jq -s .)
+
+    local missing_perms=()
+    while IFS= read -r perm; do
+        [[ -n "$perm" ]] && missing_perms+=("$perm")
+    done < <(echo "$settings" | jq -r --argjson perms "$perms_json" \
+        '(.permissions.allow // []) as $e | $perms[] | select(. as $p |
+            ($p | sub(" \\*\\)$"; ":*)")) as $legacy |
+            ($e | index($p) | not) and ($e | index($legacy) | not))')
+
+    # ── Nothing to do? ──────────────────────────────────────────
+    if [[ ${#feature_changes[@]} -eq 0 ]] && [[ ${#missing_perms[@]} -eq 0 ]]; then
+        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
+        return
+    fi
+
+    # ── Prompt: feature settings ────────────────────────────────
+    if [[ ${#feature_changes[@]} -gt 0 ]]; then
+        echo ""
+        echo "  The following will be added to $HOME/.claude/settings.json:"
+        echo ""
+        for change in "${feature_changes[@]}"; do
+            case "$change" in
+                webfetch)    echo -e "  • ${BOLD}WebFetch${NC} — allow web page fetching without prompting" ;;
+                websearch)   echo -e "  • ${BOLD}WebSearch${NC} — allow web searches without prompting" ;;
+                attribution) echo -e "  • ${BOLD}attribution${NC} — disable commit/PR attribution tags" ;;
+                teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC} — enable agent teams" ;;
+            esac
+        done
+        echo ""
+        if prompt_yes_no "  Apply these settings?"; then
+            for change in "${feature_changes[@]}"; do
+                case "$change" in
+                    webfetch)    updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebFetch"])') ;;
+                    websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
+                    attribution) updated=$(echo "$updated" | jq '.attribution = {"commit": "", "pr": ""}') ;;
+                    teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                esac
+            done
+            changed=true
+        fi
+    fi
+
+    # ── Prompt: read-only permissions ───────────────────────────
+    if [[ ${#missing_perms[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  Recommended read-only developer permissions (${#missing_perms[@]} commands):"
+        echo ""
+
+        local raw_cmds=()
+        for perm in "${missing_perms[@]}"; do
+            local cmd="${perm#Bash(}"
+            raw_cmds+=("${cmd% *)}")
+        done
+        display_permission_summary "${raw_cmds[@]}"
+
+        echo ""
+        if prompt_yes_no "  Add recommended read-only permissions?"; then
+            local add_json
+            add_json=$(printf '%s\n' "${missing_perms[@]}" | jq -R . | jq -s .)
+            updated=$(echo "$updated" | jq --argjson add "$add_json" \
+                '.permissions.allow = ((.permissions.allow // []) + $add)')
+            changed=true
+        fi
+    fi
+
+    # ── Write result ────────────────────────────────────────────
+    if $changed; then
+        echo "$updated" | jq . > "$settings_file"
+        print_success "Claude Code settings updated"
+    else
+        print_info "Skipped Claude Code settings"
+    fi
+}
+
+# ---- Gemini CLI settings configuration -------------------------------------
+
+configure_gemini_settings() {
+    local settings_file="$HOME/.gemini/settings.json"
+
+    echo ""
+    echo -e "${BOLD}── Gemini CLI Settings ──${NC}"
+
+    mkdir -p "$HOME/.gemini"
+    if [[ ! -f "$settings_file" ]]; then
+        echo '{}' > "$settings_file"
+    fi
+
+    if ! jq empty "$settings_file" 2>/dev/null; then
+        print_warning "$HOME/.gemini/settings.json is not valid JSON — skipping"
+        return
+    fi
+
+    local settings updated
+    settings=$(cat "$settings_file")
+    updated="$settings"
+    local changed=false
+
+    local allowed
+    allowed=$(echo "$settings" | jq -r '.tools.allowed // [] | .[]' 2>/dev/null)
+
+    # ── Check web tools ─────────────────────────────────────────
+    local web_changes=()
+
+    if ! echo "$allowed" | grep -qx "web_fetch"; then
+        web_changes+=("web_fetch")
+    fi
+    if ! echo "$allowed" | grep -qx "google_web_search"; then
+        web_changes+=("google_web_search")
+    fi
+
+    # ── Check read-only permissions ─────────────────────────────
+    local all_readonly=("${GEMINI_READONLY_BUILTINS[@]}" "${GEMINI_READONLY_SHELL[@]}")
+    local missing_perms=()
+    for perm in "${all_readonly[@]}"; do
+        if ! echo "$allowed" | grep -qxF "$perm"; then
+            missing_perms+=("$perm")
+        fi
+    done
+
+    # ── Nothing to do? ──────────────────────────────────────────
+    if [[ ${#web_changes[@]} -eq 0 ]] && [[ ${#missing_perms[@]} -eq 0 ]]; then
+        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
+        return
+    fi
+
+    # ── Prompt: web tools ───────────────────────────────────────
+    if [[ ${#web_changes[@]} -gt 0 ]]; then
+        echo ""
+        echo "  The following will be added to $HOME/.gemini/settings.json:"
+        echo ""
+        for change in "${web_changes[@]}"; do
+            case "$change" in
+                web_fetch)         echo -e "  • ${BOLD}web_fetch${NC} — allow web page fetching without prompting" ;;
+                google_web_search) echo -e "  • ${BOLD}google_web_search${NC} — allow web searches without prompting" ;;
+            esac
+        done
+        echo ""
+        if prompt_yes_no "  Apply these settings?"; then
+            for change in "${web_changes[@]}"; do
+                updated=$(echo "$updated" | jq --arg t "$change" \
+                    '.tools.allowed = ((.tools.allowed // []) + [$t])')
+            done
+            changed=true
+        fi
+    fi
+
+    # ── Prompt: read-only permissions ───────────────────────────
+    if [[ ${#missing_perms[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "  Recommended read-only developer permissions (${#missing_perms[@]} tools):"
+        echo ""
+
+        local builtin_cmds=() raw_cmds=()
+        for perm in "${missing_perms[@]}"; do
+            if [[ "$perm" == run_shell_command\(*\) ]]; then
+                local cmd="${perm#run_shell_command(}"
+                raw_cmds+=("${cmd%)}")
+            else
+                builtin_cmds+=("$perm")
+            fi
+        done
+
+        [[ ${#builtin_cmds[@]} -gt 0 ]] && echo -e "    ${BOLD}Built-in (${#builtin_cmds[@]}):${NC} ${builtin_cmds[*]}"
+        display_permission_summary "${raw_cmds[@]}"
+
+        echo ""
+        if prompt_yes_no "  Add recommended read-only permissions?"; then
+            local add_json
+            add_json=$(printf '%s\n' "${missing_perms[@]}" | jq -R . | jq -s .)
+            updated=$(echo "$updated" | jq --argjson add "$add_json" \
+                '.tools.allowed = ((.tools.allowed // []) + $add)')
+            changed=true
+        fi
+    fi
+
+    # ── Write result ────────────────────────────────────────────
+    if $changed; then
+        echo "$updated" | jq . > "$settings_file"
+        print_success "Gemini CLI settings updated"
+    else
+        print_info "Skipped Gemini CLI settings"
+    fi
+}
+
 # ---- prerequisite checks --------------------------------------------------
 
 if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]]; then
@@ -198,11 +491,25 @@ if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".c
     exit 1
 fi
 
+missing=()
+
 if ! command -v gh &>/dev/null; then
-    print_error "GitHub CLI (gh) is not installed."
+    missing+=("gh")
+fi
+
+if ! command -v jq &>/dev/null; then
+    missing+=("jq")
+fi
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+    print_error "Missing required tools: ${missing[*]}"
     echo ""
-    echo "  Install it from: https://cli.github.com/"
-    echo "  Or via Homebrew:  brew install gh"
+    for tool in "${missing[@]}"; do
+        case "$tool" in
+            gh) echo "  gh  — GitHub CLI:  brew install gh   (https://cli.github.com/)" ;;
+            jq) echo "  jq  — JSON processor: brew install jq   (https://jqlang.github.io/jq/)" ;;
+        esac
+    done
     echo ""
     exit 1
 fi
@@ -278,11 +585,13 @@ for tool in "${selected_tools[@]}"; do
             install_commands "Claude Code" \
                 ".claude/commands" "$HOME/.claude/commands" \
                 "file:md" "$MD_MARKER" "/" "get_md_description"
+            configure_claude_settings
             ;;
         gemini)
             install_commands "Gemini CLI" \
                 ".gemini/commands" "$HOME/.gemini/commands" \
                 "file:toml" "$TOML_MARKER" "/" "get_toml_description"
+            configure_gemini_settings
             ;;
         codex)
             install_commands "Codex CLI" \
