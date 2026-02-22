@@ -10,6 +10,7 @@ Propose a single git commit message for the currently staged changes.
 ## Gather context
 
 Run these commands to understand the changes:
+
 - `git diff --staged` — the actual changes
 - `git status -s` — staged file list
 - `git log -n 20 --oneline` — recent style and to avoid repetition
@@ -25,7 +26,7 @@ Body: include bullets only when the subject alone is insufficient. Each bullet m
 
 ## Output
 
-```
+```text
 [ticket] type(scope): concise subject
 
 - Important change or impact

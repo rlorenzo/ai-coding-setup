@@ -20,6 +20,8 @@ cd ai-coding-setup
 
 The script detects which AI tools you have installed and walks you through installing commands for each one interactively.
 
+> **Windows:** Run the setup script from [Git Bash](https://git-scm.com/downloads/win).
+
 ## Supported Tools
 
 | Tool | Command format | Source directory | Installs to |
@@ -65,6 +67,25 @@ Delete the command/skill from the corresponding directory:
 - Codex: `~/.codex/skills/`
 
 The setup script only manages commands it originally installed.
+
+## Contributing
+
+### Pre-commit hooks (optional)
+
+This repo uses [pre-commit](https://pre-commit.com/) to run linters locally before each commit. Install it once and you'll get automatic checks for shell scripts (shellcheck), markdown (markdownlint), and TOML syntax.
+
+```bash
+pip install pre-commit   # or: brew install pre-commit (macOS)
+pre-commit install
+```
+
+After that, hooks run automatically on `git commit`. You can also run them manually:
+
+```bash
+pre-commit run --all-files
+```
+
+If you skip the local setup, the same checks run in CI on your pull request.
 
 ## License
 

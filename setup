@@ -12,6 +12,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 MD_MARKER="<!-- source: ai-coding-setup -->"
@@ -38,51 +39,165 @@ prompt_yes_no() {
     [[ "$yn" =~ ^[Yy]$ ]]
 }
 
-# Extract description from a Claude .md command file.
-# Returns the first non-blank, non-heading line.
+# Description extractors — one per file format.
 get_md_description() {
-    local file="$1"
     local desc
-    desc=$(grep -m 1 -v -E '^\s*$|^\s*#|^---' "$file" | head -1)
+    desc=$(grep -m 1 -v -E '^\s*$|^\s*#|^---' "$1" | head -1)
     echo "${desc:-No description available}"
 }
 
-# Extract description from a Gemini .toml command file.
-# Parses the description = "..." field.
 get_toml_description() {
-    local file="$1"
     local desc
-    desc=$(grep -m 1 '^description' "$file" | sed 's/^description[[:space:]]*=[[:space:]]*"\(.*\)"/\1/')
+    desc=$(grep -m 1 '^description' "$1" | sed 's/^description[[:space:]]*=[[:space:]]*"\(.*\)"/\1/')
     echo "${desc:-No description available}"
 }
 
-# Extract description from a Codex SKILL.md file.
-# Parses the description: field from YAML front matter.
 get_skill_description() {
-    local file="$1"
     local desc
-    desc=$(grep -m 1 '^description:' "$file" | sed 's/^description:[[:space:]]*"\{0,1\}\(.*[^"]\)"\{0,1\}$/\1/')
+    desc=$(grep -m 1 '^description:' "$1" | sed 's/^description:[[:space:]]*"\{0,1\}\(.*[^"]\)"\{0,1\}$/\1/')
     echo "${desc:-No description available}"
 }
 
-has_md_marker() {
-    grep -qF "$MD_MARKER" "$1" 2>/dev/null
+has_marker() {
+    grep -qF "$1" "$2" 2>/dev/null
 }
 
-has_toml_marker() {
-    grep -qF "$TOML_MARKER" "$1" 2>/dev/null
+is_up_to_date() {
+    local src="$1" dest="$2" marker="$3"
+    local expected
+    expected=$(cat "$src"; printf '\n%s\n' "$marker")
+    [[ "$expected" == "$(cat "$dest")" ]]
+}
+
+# ---- generic install function ----------------------------------------------
+#
+# Usage:
+#   install_commands <display_name> <src_dir> <dest_dir> \
+#                    <mode> <marker> <prefix> <desc_fn>
+#
+# mode:   "file:<ext>" for single-file commands (e.g. "file:md", "file:toml")
+#         "skill"      for directory-based Codex skills
+# prefix: "/" for slash commands, "\$" for Codex skills
+
+install_commands() {
+    local display_name="$1"
+    local src_dir="$2"
+    local dest_dir="$3"
+    local mode="$4"
+    local marker="$5"
+    local prefix="$6"
+    local desc_fn="$7"
+
+    if [[ ! -d "$src_dir" ]]; then
+        print_warning "No commands found in $src_dir/"
+        return
+    fi
+
+    # Discover source entries.
+    local entries=()
+    if [[ "$mode" == skill ]]; then
+        while IFS= read -r -d '' d; do
+            [[ -f "$d/SKILL.md" ]] && entries+=("$d")
+        done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+    else
+        local ext="${mode#file:}"
+        while IFS= read -r -d '' f; do
+            entries+=("$f")
+        done < <(find "$src_dir" -name "*.$ext" -print0 | sort -z)
+    fi
+
+    if [[ ${#entries[@]} -eq 0 ]]; then
+        print_warning "No commands found in $src_dir/"
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}── ${display_name} ──${NC}"
+    mkdir -p "$dest_dir"
+
+    local installed=0 updated=0 skipped=0 current=0
+
+    for entry in "${entries[@]}"; do
+        local cmd_name src_file dest_file dest_entry
+
+        if [[ "$mode" == skill ]]; then
+            cmd_name=$(basename "$entry")
+            src_file="$entry/SKILL.md"
+            dest_entry="$dest_dir/$cmd_name"
+            dest_file="$dest_entry/SKILL.md"
+        else
+            local filename
+            filename=$(basename "$entry")
+            local ext="${mode#file:}"
+            cmd_name="${filename%."$ext"}"
+            src_file="$entry"
+            dest_file="$dest_dir/$filename"
+            dest_entry="$dest_file"
+        fi
+
+        local desc
+        desc=$("$desc_fn" "$src_file")
+        local label="${prefix}${cmd_name}"
+
+        # Already installed with our marker?
+        local dest_exists=false
+        if [[ "$mode" == skill ]]; then
+            [[ -d "$dest_entry" ]] && [[ -f "$dest_file" ]] && dest_exists=true
+        else
+            [[ -f "$dest_file" ]] && dest_exists=true
+        fi
+
+        if $dest_exists; then
+            if has_marker "$marker" "$dest_file"; then
+                if is_up_to_date "$src_file" "$dest_file" "$marker"; then
+                    echo -e "  ${DIM}${label} — up to date${NC}"
+                    ((current++))
+                else
+                    if [[ "$mode" == skill ]]; then
+                        rm -rf "$dest_entry"
+                        cp -r "$entry" "$dest_entry"
+                    else
+                        cp "$src_file" "$dest_file"
+                    fi
+                    has_marker "$marker" "$dest_file" || printf '\n%s\n' "$marker" >> "$dest_file"
+                    print_success "Updated ${label}"
+                    ((updated++))
+                fi
+            else
+                print_warning "${label} exists (custom) — skipped"
+                ((skipped++))
+            fi
+        else
+            echo ""
+            echo -e "  ${BOLD}${label}${NC}"
+            echo -e "  ${desc}"
+            if prompt_yes_no "  Install?"; then
+                if [[ "$mode" == skill ]]; then
+                    cp -r "$entry" "$dest_entry"
+                else
+                    cp "$src_file" "$dest_file"
+                fi
+                printf '\n%s\n' "$marker" >> "$dest_file"
+                print_success "Installed ${label}"
+                ((installed++))
+            else
+                print_info "Skipped ${label}"
+                ((skipped++))
+            fi
+        fi
+    done
+
+    echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
 }
 
 # ---- prerequisite checks --------------------------------------------------
 
-# Must be run from repo root
 if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]]; then
     print_error "No command directories found (.claude/commands, .gemini/commands, .codex/skills)."
     print_error "Please run this script from the ai-coding-setup repository root."
     exit 1
 fi
 
-# GitHub CLI required
 if ! command -v gh &>/dev/null; then
     print_error "GitHub CLI (gh) is not installed."
     echo ""
@@ -155,260 +270,25 @@ if [[ ${#selected_tools[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# ---- install functions -----------------------------------------------------
-
-install_claude_commands() {
-    local src_dir=".claude/commands"
-    local dest_dir="$HOME/.claude/commands"
-    local marker="$MD_MARKER"
-    local installed=0 updated=0 skipped=0
-
-    if [[ ! -d "$src_dir" ]]; then
-        print_warning "No Claude commands found in $src_dir/"
-        return
-    fi
-
-    local files=()
-    while IFS= read -r -d '' f; do
-        files+=("$f")
-    done < <(find "$src_dir" -name "*.md" -print0 | sort -z)
-
-    if [[ ${#files[@]} -eq 0 ]]; then
-        print_warning "No .md files found in $src_dir/"
-        return
-    fi
-
-    echo ""
-    echo -e "${BOLD}── Claude Code ──${NC}"
-    echo ""
-
-    if ! prompt_yes_no "Install Claude Code commands? (${#files[@]} available)"; then
-        print_info "Skipped Claude Code."
-        return
-    fi
-
-    echo ""
-    mkdir -p "$dest_dir"
-
-    for src_file in "${files[@]}"; do
-        local filename
-        filename=$(basename "$src_file")
-        local cmd_name="${filename%.md}"
-        local dest_file="$dest_dir/$filename"
-        local desc
-        desc=$(get_md_description "$src_file")
-
-        echo -e "  ${BOLD}/${cmd_name}${NC}"
-        echo -e "  ${desc}"
-        echo ""
-
-        if [[ -f "$dest_file" ]]; then
-            if has_md_marker "$dest_file"; then
-                if prompt_yes_no "  Already installed by ai-coding-setup. Update?"; then
-                    cp "$src_file" "$dest_file"
-                    if ! has_md_marker "$dest_file"; then
-                        printf '\n%s\n' "$marker" >> "$dest_file"
-                    fi
-                    print_success "Updated /${cmd_name}"
-                    ((updated++))
-                else
-                    print_info "Skipped /${cmd_name}"
-                    ((skipped++))
-                fi
-            else
-                print_warning "/${cmd_name} already exists and was NOT installed by this script."
-                echo -e "  ${YELLOW}Skipping to avoid overwriting your custom command.${NC}"
-                ((skipped++))
-            fi
-        else
-            if prompt_yes_no "  Install this command?"; then
-                cp "$src_file" "$dest_file"
-                printf '\n%s\n' "$marker" >> "$dest_file"
-                print_success "Installed /${cmd_name}"
-                ((installed++))
-            else
-                print_info "Skipped /${cmd_name}"
-                ((skipped++))
-            fi
-        fi
-        echo ""
-    done
-
-    echo -e "  ${BOLD}Claude Code:${NC} $installed installed, $updated updated, $skipped skipped"
-}
-
-install_gemini_commands() {
-    local src_dir=".gemini/commands"
-    local dest_dir="$HOME/.gemini/commands"
-    local marker="$TOML_MARKER"
-    local installed=0 updated=0 skipped=0
-
-    if [[ ! -d "$src_dir" ]]; then
-        print_warning "No Gemini commands found in $src_dir/"
-        return
-    fi
-
-    local files=()
-    while IFS= read -r -d '' f; do
-        files+=("$f")
-    done < <(find "$src_dir" -name "*.toml" -print0 | sort -z)
-
-    if [[ ${#files[@]} -eq 0 ]]; then
-        print_warning "No .toml files found in $src_dir/"
-        return
-    fi
-
-    echo ""
-    echo -e "${BOLD}── Gemini CLI ──${NC}"
-    echo ""
-
-    if ! prompt_yes_no "Install Gemini CLI commands? (${#files[@]} available)"; then
-        print_info "Skipped Gemini CLI."
-        return
-    fi
-
-    echo ""
-    mkdir -p "$dest_dir"
-
-    for src_file in "${files[@]}"; do
-        local filename
-        filename=$(basename "$src_file")
-        local cmd_name="${filename%.toml}"
-        local dest_file="$dest_dir/$filename"
-        local desc
-        desc=$(get_toml_description "$src_file")
-
-        echo -e "  ${BOLD}/${cmd_name}${NC}"
-        echo -e "  ${desc}"
-        echo ""
-
-        if [[ -f "$dest_file" ]]; then
-            if has_toml_marker "$dest_file"; then
-                if prompt_yes_no "  Already installed by ai-coding-setup. Update?"; then
-                    cp "$src_file" "$dest_file"
-                    if ! has_toml_marker "$dest_file"; then
-                        printf '\n%s\n' "$marker" >> "$dest_file"
-                    fi
-                    print_success "Updated /${cmd_name}"
-                    ((updated++))
-                else
-                    print_info "Skipped /${cmd_name}"
-                    ((skipped++))
-                fi
-            else
-                print_warning "/${cmd_name} already exists and was NOT installed by this script."
-                echo -e "  ${YELLOW}Skipping to avoid overwriting your custom command.${NC}"
-                ((skipped++))
-            fi
-        else
-            if prompt_yes_no "  Install this command?"; then
-                cp "$src_file" "$dest_file"
-                printf '\n%s\n' "$marker" >> "$dest_file"
-                print_success "Installed /${cmd_name}"
-                ((installed++))
-            else
-                print_info "Skipped /${cmd_name}"
-                ((skipped++))
-            fi
-        fi
-        echo ""
-    done
-
-    echo -e "  ${BOLD}Gemini CLI:${NC} $installed installed, $updated updated, $skipped skipped"
-}
-
-install_codex_skills() {
-    local src_dir=".codex/skills"
-    local dest_dir="$HOME/.codex/skills"
-    local marker="$MD_MARKER"
-    local installed=0 updated=0 skipped=0
-
-    if [[ ! -d "$src_dir" ]]; then
-        print_warning "No Codex skills found in $src_dir/"
-        return
-    fi
-
-    # Find skill directories (each must contain SKILL.md)
-    local skill_dirs=()
-    while IFS= read -r -d '' d; do
-        if [[ -f "$d/SKILL.md" ]]; then
-            skill_dirs+=("$d")
-        fi
-    done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
-
-    if [[ ${#skill_dirs[@]} -eq 0 ]]; then
-        print_warning "No skills with SKILL.md found in $src_dir/"
-        return
-    fi
-
-    echo ""
-    echo -e "${BOLD}── Codex CLI ──${NC}"
-    echo ""
-
-    if ! prompt_yes_no "Install Codex CLI skills? (${#skill_dirs[@]} available)"; then
-        print_info "Skipped Codex CLI."
-        return
-    fi
-
-    echo ""
-    mkdir -p "$dest_dir"
-
-    for src_skill_dir in "${skill_dirs[@]}"; do
-        local skill_name
-        skill_name=$(basename "$src_skill_dir")
-        local dest_skill_dir="$dest_dir/$skill_name"
-        local src_skill_md="$src_skill_dir/SKILL.md"
-        local dest_skill_md="$dest_skill_dir/SKILL.md"
-        local desc
-        desc=$(get_skill_description "$src_skill_md")
-
-        echo -e "  ${BOLD}\$${skill_name}${NC}"
-        echo -e "  ${desc}"
-        echo ""
-
-        if [[ -d "$dest_skill_dir" ]] && [[ -f "$dest_skill_md" ]]; then
-            if has_md_marker "$dest_skill_md"; then
-                if prompt_yes_no "  Already installed by ai-coding-setup. Update?"; then
-                    rm -rf "$dest_skill_dir"
-                    cp -r "$src_skill_dir" "$dest_skill_dir"
-                    if ! has_md_marker "$dest_skill_md"; then
-                        printf '\n%s\n' "$marker" >> "$dest_skill_md"
-                    fi
-                    print_success "Updated \$${skill_name}"
-                    ((updated++))
-                else
-                    print_info "Skipped \$${skill_name}"
-                    ((skipped++))
-                fi
-            else
-                print_warning "\$${skill_name} already exists and was NOT installed by this script."
-                echo -e "  ${YELLOW}Skipping to avoid overwriting your custom skill.${NC}"
-                ((skipped++))
-            fi
-        else
-            if prompt_yes_no "  Install this skill?"; then
-                cp -r "$src_skill_dir" "$dest_skill_dir"
-                printf '\n%s\n' "$marker" >> "$dest_skill_md"
-                print_success "Installed \$${skill_name}"
-                ((installed++))
-            else
-                print_info "Skipped \$${skill_name}"
-                ((skipped++))
-            fi
-        fi
-        echo ""
-    done
-
-    echo -e "  ${BOLD}Codex CLI:${NC} $installed installed, $updated updated, $skipped skipped"
-}
-
 # ---- run installs ----------------------------------------------------------
 
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
-        claude) install_claude_commands ;;
-        gemini) install_gemini_commands ;;
-        codex)  install_codex_skills ;;
+        claude)
+            install_commands "Claude Code" \
+                ".claude/commands" "$HOME/.claude/commands" \
+                "file:md" "$MD_MARKER" "/" "get_md_description"
+            ;;
+        gemini)
+            install_commands "Gemini CLI" \
+                ".gemini/commands" "$HOME/.gemini/commands" \
+                "file:toml" "$TOML_MARKER" "/" "get_toml_description"
+            ;;
+        codex)
+            install_commands "Codex CLI" \
+                ".codex/skills" "$HOME/.codex/skills" \
+                "skill" "$MD_MARKER" "\$" "get_skill_description"
+            ;;
     esac
 done
 

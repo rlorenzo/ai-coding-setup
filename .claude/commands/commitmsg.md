@@ -19,7 +19,7 @@ Body: include bullets only when the subject alone is insufficient. Each bullet m
 
 ## Output
 
-```
+```text
 [ticket] type(scope): concise subject
 
 - Important change or impact
