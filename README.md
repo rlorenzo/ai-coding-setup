@@ -5,6 +5,7 @@ Set of prompts, skills, and scripts to aid in utilizing AI coding agents in deve
 ## Prerequisites
 
 - [GitHub CLI (`gh`)](https://cli.github.com/) — installed and authenticated
+- [Node.js (`npx`)](https://nodejs.org/) — required for MCP servers
 - At least one of the following AI coding tools:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
@@ -47,6 +48,16 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 - Each AI tool has its own command format, so commands are maintained as separate source files per tool.
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
+
+## MCP Server Configuration
+
+The setup script can configure [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers for your AI tools. Currently supported:
+
+| Server | Package | Description |
+| --- | --- | --- |
+| [Playwright](https://github.com/microsoft/playwright-mcp) | `@playwright/mcp@latest` | Browser automation and web testing |
+
+MCP servers are added via each tool's `mcp add` CLI command at user scope.
 
 ## Adding New Commands
 
