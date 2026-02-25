@@ -65,10 +65,10 @@ for _cmd in "${READONLY_COMMANDS[@]}"; do
 done
 
 # ---- MCP server definitions ------------------------------------------------
-# Format: "name|command|arg1,arg2,..."
+# Format: "name|command|arg1,arg2,...|permission_pattern"
 # To add a new MCP server, append an entry here.
 MCP_SERVERS=(
-    "playwright|npx|@playwright/mcp@latest"
+    "playwright|npx|@playwright/mcp@latest|mcp__playwright__browser_*"
 )
 
 # ---- helpers --------------------------------------------------------------
@@ -145,11 +145,11 @@ display_permission_summary() {
 
 # ---- MCP server helpers ----------------------------------------------------
 
-# Parse an MCP_SERVERS entry into name, command, and args array.
-# Sets: _mcp_name, _mcp_command, _mcp_args (array)
+# Parse an MCP_SERVERS entry into name, command, args array, and permission.
+# Sets: _mcp_name, _mcp_command, _mcp_args (array), _mcp_permission
 parse_mcp_server() {
     local IFS='|'
-    read -r _mcp_name _mcp_command _mcp_args_csv <<< "$1"
+    read -r _mcp_name _mcp_command _mcp_args_csv _mcp_permission <<< "$1"
     IFS=',' read -ra _mcp_args <<< "$_mcp_args_csv"
 }
 
@@ -194,6 +194,46 @@ add_mcp_server() {
     esac
 }
 
+# Check whether an MCP auto-approve permission exists for a given tool.
+# Returns success for tools without a known permission model (e.g. codex).
+is_mcp_permitted() {
+    local tool="$1" permission="$2"
+    case "$tool" in
+        claude)
+            [[ -f "$HOME/.claude/settings.json" ]] \
+                && jq -e --arg p "$permission" '(.permissions.allow // []) | index($p)' \
+                    "$HOME/.claude/settings.json" &>/dev/null
+            ;;
+        gemini)
+            [[ -f "$HOME/.gemini/settings.json" ]] \
+                && jq -e --arg p "$permission" '(.tools.allowed // []) | index($p)' \
+                    "$HOME/.gemini/settings.json" &>/dev/null
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+# Add an auto-approve permission for MCP tools.
+add_mcp_permission() {
+    local tool="$1" permission="$2"
+    case "$tool" in
+        claude)
+            local file="$HOME/.claude/settings.json"
+            local updated
+            updated=$(jq --arg p "$permission" \
+                '.permissions.allow = ((.permissions.allow // []) + [$p])' "$file")
+            echo "$updated" | jq . > "$file"
+            ;;
+        gemini)
+            local file="$HOME/.gemini/settings.json"
+            local updated
+            updated=$(jq --arg p "$permission" \
+                '.tools.allowed = ((.tools.allowed // []) + [$p])' "$file")
+            echo "$updated" | jq . > "$file"
+            ;;
+    esac
+}
+
 # Generic MCP server configuration for any supported tool.
 # Usage: configure_mcp <tool> <display_name> <cli_command>
 configure_mcp() {
@@ -220,27 +260,54 @@ configure_mcp() {
     done
 
     if [[ ${#missing_mcp[@]} -eq 0 ]]; then
-        echo -e "  ${DIM}MCP servers already configured — nothing to do${NC}"
-        return
+        echo -e "  ${DIM}MCP servers already configured${NC}"
+    else
+        echo ""
+        echo "  MCP servers to configure (user scope — available in all projects):"
+        echo ""
+        display_mcp_list "${missing_mcp[@]}"
+        echo ""
+
+        if prompt_yes_no "  Add MCP server configuration?"; then
+            for server_def in "${missing_mcp[@]}"; do
+                parse_mcp_server "$server_def"
+                if add_mcp_server "$tool" "$_mcp_name" "$_mcp_command" "${_mcp_args[@]}"; then
+                    print_success "Added $_mcp_name MCP server"
+                else
+                    print_warning "Failed to add $_mcp_name MCP server"
+                fi
+            done
+        else
+            print_info "Skipped ${display_name} MCP servers"
+        fi
     fi
 
-    echo ""
-    echo "  MCP servers to configure (user scope — available in all projects):"
-    echo ""
-    display_mcp_list "${missing_mcp[@]}"
-    echo ""
+    # ── Ensure auto-approve permissions for configured MCP servers ──
+    local missing_perms=()
+    for server_def in "${MCP_SERVERS[@]}"; do
+        parse_mcp_server "$server_def"
+        [[ -z "$_mcp_permission" ]] && continue
+        is_mcp_configured "$tool" "$_mcp_name" || continue
+        is_mcp_permitted "$tool" "$_mcp_permission" && continue
+        missing_perms+=("$_mcp_permission")
+    done
 
-    if prompt_yes_no "  Add MCP server configuration?"; then
-        for server_def in "${missing_mcp[@]}"; do
-            parse_mcp_server "$server_def"
-            if add_mcp_server "$tool" "$_mcp_name" "$_mcp_command" "${_mcp_args[@]}"; then
-                print_success "Added $_mcp_name MCP server"
-            else
-                print_warning "Failed to add $_mcp_name MCP server"
-            fi
+    if [[ ${#missing_perms[@]} -gt 0 ]]; then
+        echo ""
+        echo "  Auto-approve permissions to add:"
+        echo ""
+        for perm in "${missing_perms[@]}"; do
+            echo -e "  • ${BOLD}${perm}${NC}"
         done
-    else
-        print_info "Skipped ${display_name} MCP servers"
+        echo ""
+        if prompt_yes_no "  Add auto-approve permissions for MCP tools?"; then
+            for perm in "${missing_perms[@]}"; do
+                add_mcp_permission "$tool" "$perm"
+                print_success "Auto-approved $perm"
+            done
+        else
+            print_info "Skipped MCP auto-approve permissions"
+        fi
     fi
 }
 
