@@ -356,7 +356,7 @@ pre_codex_snapshot="$TMPDIR_REVIEW/pre-codex-initial.txt"
 snapshot_untracked > "$pre_codex_snapshot"
 
 local_exit=0
-echo "$codex_task" | codex exec --full-auto - || local_exit=$?
+echo "$codex_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
 cleanup_codex_artifacts "$pre_codex_snapshot"
 
 if [[ $local_exit -ne 0 ]]; then
@@ -433,7 +433,7 @@ $followup_prompt"
     snapshot_untracked > "$pre_codex_snapshot"
 
     local_exit=0
-    echo "$followup_task" | codex exec --full-auto - || local_exit=$?
+    echo "$followup_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
     cleanup_codex_artifacts "$pre_codex_snapshot"
 
     if [[ $local_exit -ne 0 ]]; then

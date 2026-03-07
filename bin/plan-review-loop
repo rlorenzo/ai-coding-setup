@@ -254,7 +254,7 @@ The plan file to review is: $PLAN_FILE
 $codex_prompt"
 
 local_exit=0
-echo "$codex_task" | codex exec --full-auto - || local_exit=$?
+echo "$codex_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
 
 if [[ $local_exit -ne 0 ]]; then
     write_status "Codex plan review exited with code $local_exit" "$YELLOW"
@@ -327,7 +327,7 @@ IMPORTANT: Write ALL output (feedback or NO_FURTHER_FEEDBACK) to the file feedba
 $followup_prompt"
 
     local_exit=0
-    echo "$followup_task" | codex exec --full-auto - || local_exit=$?
+    echo "$followup_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
 
     if [[ $local_exit -ne 0 ]]; then
         write_status "Codex follow-up failed (exit $local_exit) — aborting review loop" "$YELLOW"
