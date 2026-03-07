@@ -687,6 +687,77 @@ configure_gemini_settings() {
     fi
 }
 
+# ---- Codex CLI settings configuration ---------------------------------------
+
+configure_codex_settings() {
+    local config_file="$HOME/.codex/config.toml"
+
+    echo ""
+    echo -e "${BOLD}── Codex CLI Settings ──${NC}"
+
+    mkdir -p "$HOME/.codex"
+    if [[ ! -f "$config_file" ]]; then
+        touch "$config_file"
+    fi
+
+    local changes=()
+    local changed=false
+
+    # Check for deprecated collab feature flag
+    if grep -qE '^collab\s*=' "$config_file" 2>/dev/null; then
+        changes+=("remove_collab")
+    fi
+
+    # Check if multi_agent is enabled under [features]
+    if ! grep -qE '^multi_agent\s*=\s*true' "$config_file" 2>/dev/null; then
+        changes+=("add_multi_agent")
+    fi
+
+    if [[ ${#changes[@]} -eq 0 ]]; then
+        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
+        return
+    fi
+
+    echo ""
+    echo "  The following changes will be applied to $config_file:"
+    echo ""
+    for change in "${changes[@]}"; do
+        case "$change" in
+            remove_collab)   echo -e "  • ${BOLD}Remove collab${NC} — deprecated, replaced by multi_agent" ;;
+            add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC} — enable multi-agent collaboration" ;;
+        esac
+    done
+    echo ""
+
+    if prompt_yes_no "  Apply these settings?"; then
+        for change in "${changes[@]}"; do
+            case "$change" in
+                remove_collab)
+                    sed -i.bak '/^collab[[:space:]]*=/d' "$config_file"
+                    rm -f "${config_file}.bak"
+                    ;;
+                add_multi_agent)
+                    # Ensure [features] section exists and add multi_agent under it
+                    if grep -qE '^\[features\]' "$config_file" 2>/dev/null; then
+                        sed -i.bak '/^\[features\]/a\
+multi_agent = true' "$config_file"
+                        rm -f "${config_file}.bak"
+                    else
+                        printf '\n[features]\nmulti_agent = true\n' >> "$config_file"
+                    fi
+                    ;;
+            esac
+        done
+        changed=true
+    fi
+
+    if $changed; then
+        print_success "Codex CLI settings updated"
+    else
+        print_info "Skipped Codex CLI settings"
+    fi
+}
+
 # ---- review loop script installer -----------------------------------------
 #
 # Symlinks executable scripts from bin/ to ~/.local/bin/ so they are on PATH.
@@ -946,6 +1017,7 @@ for tool in "${selected_tools[@]}"; do
             install_commands "Codex CLI Prompts" \
                 ".codex/prompts" "$HOME/.codex/prompts" \
                 "file:md" "$MD_MARKER" "" "get_md_description"
+            configure_codex_settings
             configure_mcp "codex" "Codex CLI" "codex"
             ;;
     esac

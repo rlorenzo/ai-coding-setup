@@ -98,12 +98,18 @@ read_prompt_file() {
     local path="$1"
     local content
     content=$(<"$path")
-    # Strip YAML frontmatter if present (---\n...\n---\n)
+    # Strip YAML frontmatter if present (---\n...\n---)
     if [[ "$content" == ---* ]]; then
-        content=$(printf '%s\n' "$content" | sed '1{/^---/d}; 1,/^---/d')
+        content=$(printf '%s\n' "$content" | awk '
+            NR==1 && /^---/ { skip=1; next }
+            skip && /^---/ { skip=0; next }
+            !skip { print }')
     fi
-    # Trim leading/trailing blank lines only (preserve indentation within)
-    content=$(printf '%s\n' "$content" | sed -e '/./,$!d' | sed -e ':a' -e '/^[[:space:]]*$/{ $d; N; ba; }')
+    # Trim leading and trailing blank lines (preserve indentation within)
+    content=$(printf '%s\n' "$content" | awk '
+        { lines[NR]=$0 }
+        /[^[:space:]]/ { if (!first) first=NR; last=NR }
+        END { for (i=first; i<=last; i++) print lines[i] }')
     printf '%s' "$content"
 }
 
@@ -411,6 +417,12 @@ Do not create any other files. Do not stage or commit anything."
 local_exit=0
 claude -p "$summary_prompt" --allowedTools "Read,Write,Grep,Glob" || local_exit=$?
 
+# ---- Cleanup intermediate files -----------------------------------------
+# Only remove feedback file when it contains no valid content (NO_FURTHER_FEEDBACK)
+if $codex_satisfied; then
+    rm -f "$FEEDBACK_FILE"
+fi
+
 # ---- Done ----------------------------------------------------------------
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
@@ -427,7 +439,7 @@ fi
 echo ""
 echo " Duration: $elapsed_display"
 echo -e " Plan    : $PLAN_FILE"
-echo -e " Feedback: feedback-plan.md"
+[[ -f "$FEEDBACK_FILE" ]] && echo -e " Feedback: feedback-plan.md"
 echo -e " Summary : plan-review-summary.md"
 echo ""
 echo -e "${CYAN}Review the improved plan and summary.${NC}"

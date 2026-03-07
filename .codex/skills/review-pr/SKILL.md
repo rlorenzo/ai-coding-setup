@@ -11,7 +11,7 @@ description: "Process unresolved review comments on a GitHub PR, fix valid issue
 
 ## Instructions
 
-Run this workflow in a loop (max 3 iterations) until no unresolved actionable comments remain.
+Run this workflow in a loop (max 5 iterations) until no unresolved actionable comments remain.
 
 ### Step 1: Check CI status
 
@@ -99,8 +99,8 @@ If no bot reviewers found, skip to summary.
 
 ### Step 7: Wait for bot review
 
-Poll every 60s for up to 10 min (first check after 5 min). Compare the latest bot review `submitted_at` timestamp against when re-review was requested. If no response after 10 min, tell the user to re-run the review-pr skill later.
+Poll every 60s for up to 15 min (first check after 8 min). Compare the latest bot review `submitted_at` timestamp against when re-review was requested. If no response after 15 min, tell the user to re-run the review-pr skill later.
 
 ### Step 8: Loop or finish
 
-If iteration 3 or no new comments, stop. Otherwise loop back to Step 1. Report summary: threads resolved, fixes made, threads remaining, CI status.
+If iteration 5 or no new comments, stop. Otherwise loop back to Step 1. Report summary: threads resolved, fixes made, threads remaining, CI status.

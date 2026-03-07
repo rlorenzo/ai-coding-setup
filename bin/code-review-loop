@@ -117,12 +117,18 @@ read_prompt_file() {
     local path="$1"
     local content
     content=$(<"$path")
-    # Strip YAML frontmatter if present (---\n...\n---\n)
+    # Strip YAML frontmatter if present (---\n...\n---)
     if [[ "$content" == ---* ]]; then
-        content=$(printf '%s\n' "$content" | sed '1{/^---/d}; 1,/^---/d')
+        content=$(printf '%s\n' "$content" | awk '
+            NR==1 && /^---/ { skip=1; next }
+            skip && /^---/ { skip=0; next }
+            !skip { print }')
     fi
-    # Trim leading/trailing blank lines only (preserve indentation within)
-    content=$(printf '%s\n' "$content" | sed -e '/./,$!d' | sed -e ':a' -e '/^[[:space:]]*$/{ $d; N; ba; }')
+    # Trim leading and trailing blank lines (preserve indentation within)
+    content=$(printf '%s\n' "$content" | awk '
+        { lines[NR]=$0 }
+        /[^[:space:]]/ { if (!first) first=NR; last=NR }
+        END { for (i=first; i<=last; i++) print lines[i] }')
     printf '%s' "$content"
 }
 
@@ -523,6 +529,14 @@ Be concise and focus on the substance of review-driven improvements, not the ori
 local_exit=0
 claude -p "$summary_prompt" --allowedTools "Read,Write,Grep,Glob" || local_exit=$?
 
+# ---- Cleanup intermediate files -----------------------------------------
+# Only remove the review file when truly clean with zero issues at all severities
+if $is_clean && [[ -f "$REVIEW_FILE" ]]; then
+    if ! grep -qiE "(High|Medium|Low)[[:space:]]*:?[[:space:]]*[1-9]" "$REVIEW_FILE"; then
+        rm -f "$REVIEW_FILE"
+    fi
+fi
+
 # ---- Done ----------------------------------------------------------------
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
@@ -537,11 +551,7 @@ fi
 echo " Cycles   : $iteration / $MAX_ITERATIONS"
 echo " Duration : $elapsed_display"
 echo ""
-echo -e " Review   : agent-code-review.md"
+[[ -f "$REVIEW_FILE" ]] && echo -e " Review   : agent-code-review.md"
 echo -e " Summary  : agent-review-summary.md"
 echo ""
-
-# Keep the review file as a final artifact regardless of verdict.
-# A clean report is still useful for auditing and downstream automation.
-
 echo -e "${CYAN}Waiting for manual review.${NC}"
