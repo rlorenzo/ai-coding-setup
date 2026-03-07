@@ -17,6 +17,7 @@ NC='\033[0m'
 
 MD_MARKER="<!-- source: ai-coding-setup -->"
 TOML_MARKER="# source: ai-coding-setup"
+FORCE=false
 
 # ---- read-only permission sets --------------------------------------------
 # Only commands that have NO write/destructive mode, even with flags.
@@ -94,8 +95,18 @@ prompt_yes_no() {
 
 # Description extractors — one per file format.
 get_md_description() {
-    local desc
-    desc=$(grep -m 1 -v -E '^\s*$|^\s*#|^---' "$1" | head -1)
+    local desc content
+    content=$(cat "$1")
+    # If file has YAML frontmatter, try extracting description from it first
+    if [[ "$content" == ---* ]]; then
+        desc=$(echo "$content" | sed '1d' | sed -n '/^---$/q; p' \
+            | grep -m 1 '^description:' \
+            | sed "s/^description:[[:space:]]*//; s/^['\"]//; s/['\"]$//")
+    fi
+    # Fallback: first non-blank, non-heading, non-frontmatter line
+    if [[ -z "${desc:-}" ]]; then
+        desc=$(grep -m 1 -v -E '^\s*$|^\s*#|^---' "$1" | head -1)
+    fi
     echo "${desc:-No description available}"
 }
 
@@ -107,7 +118,7 @@ get_toml_description() {
 
 get_skill_description() {
     local desc
-    desc=$(grep -m 1 '^description:' "$1" | sed 's/^description:[[:space:]]*"\{0,1\}\(.*[^"]\)"\{0,1\}$/\1/')
+    desc=$(grep -m 1 '^description:' "$1" | sed "s/^description:[[:space:]]*//; s/^['\"]//; s/['\"]$//")
     echo "${desc:-No description available}"
 }
 
@@ -187,6 +198,12 @@ is_mcp_configured() {
 add_mcp_server() {
     local tool="$1" name="$2" cmd="$3"
     shift 3
+    # On Windows, npx/node commands need a cmd /c wrapper for stdio MCP servers
+    if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+        set -- "$cmd" "$@"
+        cmd="cmd"
+        set -- "/c" "$@"
+    fi
     case "$tool" in
         claude) claude mcp add --scope user "$name" -- "$cmd" "$@" 2>/dev/null ;;
         gemini) gemini mcp add --scope user "$name" "$cmd" "$@" 2>/dev/null ;;
@@ -393,7 +410,7 @@ install_commands() {
             if has_marker "$marker" "$dest_file"; then
                 if is_up_to_date "$src_file" "$dest_file" "$marker"; then
                     echo -e "  ${DIM}${label} — up to date${NC}"
-                    ((current++))
+                    ((++current))
                 else
                     if [[ "$mode" == skill ]]; then
                         rm -rf "$dest_entry"
@@ -403,11 +420,23 @@ install_commands() {
                     fi
                     has_marker "$marker" "$dest_file" || printf '\n%s\n' "$marker" >> "$dest_file"
                     print_success "Updated ${label}"
-                    ((updated++))
+                    ((++updated))
                 fi
             else
-                print_warning "${label} exists (custom) — skipped"
-                ((skipped++))
+                if $FORCE; then
+                    if [[ "$mode" == skill ]]; then
+                        rm -rf "$dest_entry"
+                        cp -r "$entry" "$dest_entry"
+                    else
+                        cp "$src_file" "$dest_file"
+                    fi
+                    has_marker "$marker" "$dest_file" || printf '\n%s\n' "$marker" >> "$dest_file"
+                    print_success "Overwritten ${label} (was custom)"
+                    ((++installed))
+                else
+                    print_warning "${label} exists (custom) — skipped"
+                    ((++skipped))
+                fi
             fi
         else
             echo ""
@@ -421,10 +450,10 @@ install_commands() {
                 fi
                 printf '\n%s\n' "$marker" >> "$dest_file"
                 print_success "Installed ${label}"
-                ((installed++))
+                ((++installed))
             else
                 print_info "Skipped ${label}"
-                ((skipped++))
+                ((++skipped))
             fi
         fi
     done
@@ -658,6 +687,146 @@ configure_gemini_settings() {
     fi
 }
 
+# ---- review loop script installer -----------------------------------------
+#
+# Symlinks executable scripts from bin/ to ~/.local/bin/ so they are on PATH.
+# Falls back to copying if symlinks are not supported (e.g. Windows without
+# developer mode).
+
+install_scripts() {
+    local src_dir="$1"
+    shift
+    local dest_dir="$HOME/.local/bin"
+
+    if [[ ! -d "$src_dir" ]]; then
+        return
+    fi
+
+    # Use explicit script list if provided, otherwise discover all files
+    local scripts=()
+    if [[ $# -gt 0 ]]; then
+        scripts=("$@")
+    else
+        while IFS= read -r -d '' f; do
+            scripts+=("$f")
+        done < <(find "$src_dir" -maxdepth 1 -type f -print0 | LC_ALL=C sort -z 2>/dev/null || find "$src_dir" -maxdepth 1 -type f | LC_ALL=C sort | tr '\n' '\0')
+    fi
+
+    if [[ ${#scripts[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}── Review Loop Scripts ──${NC}"
+    echo ""
+    echo "  Scripts to install to $dest_dir/:"
+    echo ""
+    for script in "${scripts[@]}"; do
+        local name
+        name=$(basename "$script")
+        echo -e "  • ${BOLD}${name}${NC}"
+    done
+    echo ""
+
+    if ! prompt_yes_no "  Install review loop scripts?"; then
+        print_info "Skipped review loop scripts"
+        return
+    fi
+
+    mkdir -p "$dest_dir"
+
+    local installed=0 updated=0 current=0 skipped=0
+
+    for script in "${scripts[@]}"; do
+        local name abs_src dest
+        name=$(basename "$script")
+        abs_src="$(cd "$(dirname "$script")" && pwd)/$name"
+        dest="$dest_dir/$name"
+
+        if [[ -L "$dest" ]]; then
+            local target
+            target=$(readlink "$dest" 2>/dev/null) || true
+            if [[ "$target" == "$abs_src" ]]; then
+                echo -e "  ${DIM}${name} — up to date (symlinked)${NC}"
+                ((++current))
+                continue
+            fi
+            # Stale symlink (old checkout path) — remove and re-link below
+            rm -f "$dest"
+            local is_update=true
+        fi
+
+        if [[ -f "$dest" ]]; then
+            # Check if we manage it (has our marker comment)
+            if head -5 "$dest" | grep -qF "source: ai-coding-setup" 2>/dev/null; then
+                if diff -q "$abs_src" "$dest" &>/dev/null; then
+                    echo -e "  ${DIM}${name} — up to date (copied)${NC}"
+                    ((++current))
+                    continue
+                fi
+                rm -f "$dest"
+                # falls through to symlink/copy below as an update
+                local is_update=true
+            else
+                if $FORCE; then
+                    rm -f "$dest"
+                else
+                    print_warning "${name} exists in $dest_dir (custom) — skipped"
+                    ((++skipped))
+                    continue
+                fi
+            fi
+        fi
+
+        # Try symlink first, fall back to copy
+        if ln -sf "$abs_src" "$dest" 2>/dev/null; then
+            if [[ "${is_update:-}" == true ]]; then
+                print_success "Updated $name (symlinked)"
+                ((++updated))
+            else
+                print_success "Symlinked $name"
+                ((++installed))
+            fi
+        else
+            cp "$abs_src" "$dest"
+            chmod +x "$dest"
+            if [[ "${is_update:-}" == true ]]; then
+                print_success "Updated $name (copied)"
+                ((++updated))
+            else
+                print_success "Copied $name to $dest_dir/"
+                ((++installed))
+            fi
+        fi
+        unset is_update
+    done
+
+    # Check PATH
+    if [[ ":$PATH:" != *":$dest_dir:"* ]]; then
+        echo ""
+        print_warning "$dest_dir is not in your PATH"
+        echo "  Add this to your shell profile (~/.bashrc, ~/.zshrc, or ~/.profile):"
+        echo ""
+        echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
+
+    echo -e "  ${BOLD}Scripts:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
+}
+
+# ---- argument parsing ----------------------------------------------------
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force) FORCE=true; shift ;;
+        -h|--help)
+            echo "Usage: setup [-f|--force]"
+            echo "  -f, --force  Overwrite custom (non-managed) files"
+            exit 0 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
 # ---- prerequisite checks --------------------------------------------------
 
 if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]]; then
@@ -771,13 +940,45 @@ for tool in "${selected_tools[@]}"; do
             configure_mcp "gemini" "Gemini CLI" "gemini"
             ;;
         codex)
-            install_commands "Codex CLI" \
+            install_commands "Codex CLI Skills" \
                 ".codex/skills" "$HOME/.codex/skills" \
                 "skill" "$MD_MARKER" "\$" "get_skill_description"
+            install_commands "Codex CLI Prompts" \
+                ".codex/prompts" "$HOME/.codex/prompts" \
+                "file:md" "$MD_MARKER" "" "get_md_description"
             configure_mcp "codex" "Codex CLI" "codex"
             ;;
     esac
 done
+
+# ---- install review loop scripts (requires both claude and codex) ----------
+
+# Each review-loop script has its own prompt-file dependencies.  Only gate on
+# the prompts that the specific script validates at runtime so that one script
+# can be installed even when the other's prompts are not yet present.
+review_loop_scripts=()
+
+if command -v claude &>/dev/null && command -v codex &>/dev/null; then
+    # code-review-loop needs Claude + Codex code-review prompts
+    if [[ -f "$HOME/.claude/commands/code-review.md" ]] \
+        && [[ -f "$HOME/.claude/commands/code-refinement.md" ]] \
+        && [[ -f "$HOME/.codex/prompts/code-review.md" ]] \
+        && [[ -f "$HOME/.codex/prompts/code-review-followup.md" ]]; then
+        review_loop_scripts+=("bin/code-review-loop")
+    fi
+    # plan-review-loop needs Claude + Codex plan-review prompts
+    if [[ -f "$HOME/.codex/prompts/plan-review.md" ]] \
+        && [[ -f "$HOME/.codex/prompts/plan-review-followup.md" ]]; then
+        review_loop_scripts+=("bin/plan-review-loop")
+    fi
+fi
+
+if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
+    install_scripts "bin" "${review_loop_scripts[@]}"
+elif [[ -d "bin" ]]; then
+    echo ""
+    echo -e "  ${DIM}Review loop scripts require both Claude Code and Codex CLI prompts — skipped${NC}"
+fi
 
 # ---- final summary ---------------------------------------------------------
 
@@ -793,4 +994,9 @@ for tool in "${selected_tools[@]}"; do
         codex)  echo -e "  Codex CLI   — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
     esac
 done
+
+if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
+    echo ""
+    echo -e "  Review loops — run ${BOLD}code-review-loop${NC} or ${BOLD}plan-review-loop${NC} from any project"
+fi
 echo ""

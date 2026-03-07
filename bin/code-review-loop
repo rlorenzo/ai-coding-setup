@@ -1,0 +1,547 @@
+#!/usr/bin/env bash
+# source: ai-coding-setup
+# ---------------------------------------------------------------------------
+# Automated code review feedback loop between Claude Code and OpenAI Codex.
+#
+# Orchestrates a multi-step review cycle:
+#   1. Claude runs code-refinement (lint, KISS/DRY/YAGNI, test coverage)
+#   2. Stage changes
+#   3. Codex reviews staged changes -> agent-code-review.md
+#   4. If issues found: Claude responds, stages fixes, Codex re-reviews
+#   5. Loop until clean or max iterations reached
+#   6. Claude writes a narrative summary to agent-review-summary.md
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+# ---- colours (disabled when stdout is not a terminal) --------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+DIM='\033[2m'
+NC='\033[0m'
+
+if [[ ! -t 1 ]]; then
+    RED='' GREEN='' YELLOW='' CYAN='' MAGENTA='' DIM='' NC=''
+fi
+
+# ---- defaults ------------------------------------------------------------
+MAX_ITERATIONS=5
+SKIP_REFINEMENT=false
+
+# ---- usage ---------------------------------------------------------------
+usage() {
+    cat <<'EOF'
+Usage: code-review-loop [OPTIONS]
+
+Orchestrates a code review feedback loop between Claude Code and Codex CLI.
+
+Options:
+  -m, --max-iterations N   Maximum review-fix-review cycles (default: 5)
+  -s, --skip-refinement    Skip the initial Claude code-refinement step
+  -h, --help               Show this help message
+EOF
+    exit 0
+}
+
+# ---- argument parsing ----------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--max-iterations) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; MAX_ITERATIONS="$2"; shift 2 ;;
+        -s|--skip-refinement) SKIP_REFINEMENT=true; shift ;;
+        -h|--help) usage ;;
+        *) echo -e "${RED}Unknown option: $1${NC}"; usage ;;
+    esac
+done
+
+# ---- paths ---------------------------------------------------------------
+PROJECT_ROOT="$(pwd)"
+REVIEW_FILE="$PROJECT_ROOT/agent-code-review.md"
+
+CLAUDE_REFINEMENT_PROMPT="$HOME/.claude/commands/code-refinement.md"
+CLAUDE_REVIEW_PROMPT="$HOME/.claude/commands/code-review.md"
+CODEX_REVIEW_PROMPT="$HOME/.codex/prompts/code-review.md"
+CODEX_FOLLOWUP_PROMPT="$HOME/.codex/prompts/code-review-followup.md"
+
+CLAUDE_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
+
+# ---- helpers -------------------------------------------------------------
+
+# Filenames that the review loop creates — never treat as Codex artifacts
+KNOWN_REVIEW_FILES="agent-code-review.md agent-review-summary.md"
+
+# Snapshot untracked files before a Codex run so we can detect artifacts after
+snapshot_untracked() {
+    git ls-files --others --exclude-standard 2>/dev/null | sort
+}
+
+# Remove files that appeared after a Codex run (artifacts), excluding review files
+cleanup_codex_artifacts() {
+    local before_file="$1"
+    local after
+    after=$(snapshot_untracked)
+    local new_files
+    new_files=$(comm -13 "$before_file" <(echo "$after")) || true
+
+    if [[ -n "$new_files" ]]; then
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            # Skip our own review files
+            local base
+            base=$(basename "$file")
+            if [[ " $KNOWN_REVIEW_FILES " == *" $base "* ]]; then
+                continue
+            fi
+            rm -f "$file" 2>/dev/null || true
+            write_status "Removed Codex artifact: $file" "$DIM"
+        done <<< "$new_files"
+    fi
+    rm -f "$before_file"
+}
+
+write_step() {
+    local label="$1" message="$2"
+    echo ""
+    echo -e "${CYAN}[$label] $message${NC}"
+    printf '%0.s-' {1..60}
+    echo ""
+}
+
+write_status() {
+    local message="$1" color="${2:-${NC}}"
+    echo -e "  ${color}${message}${NC}"
+}
+
+read_prompt_file() {
+    local path="$1"
+    local content
+    content=$(<"$path")
+    # Strip YAML frontmatter if present (---\n...\n---\n)
+    if [[ "$content" == ---* ]]; then
+        content=$(printf '%s\n' "$content" | sed '1{/^---/d}; 1,/^---/d')
+    fi
+    # Trim leading/trailing blank lines only (preserve indentation within)
+    content=$(printf '%s\n' "$content" | sed -e '/./,$!d' | sed -e ':a' -e '/^[[:space:]]*$/{ $d; N; ba; }')
+    printf '%s' "$content"
+}
+
+test_review_clean() {
+    [[ -f "$REVIEW_FILE" ]] || return 1
+    local content
+    content=$(<"$REVIEW_FILE")
+
+    # Only an explicit "Verdict: good to go" line signals clean — a bare
+    # substring match could false-positive on "not good to go"
+    if echo "$content" | grep -qiE "verdict[[:space:]]*:[[:space:]]*good to go"; then
+        return 0
+    fi
+
+    return 1
+}
+
+get_review_issue_counts() {
+    [[ -f "$REVIEW_FILE" ]] || { echo "No review file"; return; }
+    local content high medium low
+    content=$(<"$REVIEW_FILE")
+
+    high=$(echo "$content" | grep -oE "High[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+    medium=$(echo "$content" | grep -oE "Medium[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+    low=$(echo "$content" | grep -oE "Low[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+
+    echo "High: ${high:-?}, Medium: ${medium:-?}, Low: ${low:-?}"
+}
+
+stage_review_changes() {
+    # Re-stage files that are in the review scope (partially staged files are
+    # rejected at startup, so git add here is safe)
+    local current_staged
+    current_staged=$(git diff --staged --name-only 2>/dev/null) || true
+    if [[ -n "$current_staged" ]]; then
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            git add -- "$f" 2>/dev/null || true
+        done <<< "$current_staged"
+    fi
+
+    # Stage any unstaged tracked modifications — the dirty-worktree guard at
+    # startup guarantees these were created by the review agent, not pre-existing
+    local unstaged_modified
+    unstaged_modified=$(git diff --name-only 2>/dev/null) || true
+    if [[ -n "$unstaged_modified" ]]; then
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            git add -- "$file"
+        done <<< "$unstaged_modified"
+    fi
+
+    # Stage newly created untracked files — these are legitimate fixes from
+    # Claude's refinement (new tests, helper modules, etc.).  Artifacts from
+    # tools (coverage, caches) should be covered by .gitignore; the snapshot
+    # already uses --exclude-standard so gitignored files are never seen here.
+    local new_untracked
+    new_untracked=$(comm -13 "$BASELINE_UNTRACKED" <(snapshot_untracked)) || true
+
+    if [[ -n "$new_untracked" ]]; then
+        while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            git add -- "$file"
+            write_status "Staged new file: $file" "$DIM"
+        done <<< "$new_untracked"
+    fi
+
+    # Never stage the review scratchpad or summary.
+    # Use git rm --cached which works even in repos with no commits (unborn HEAD).
+    git rm --cached --ignore-unmatch -q -- agent-code-review.md agent-review-summary.md 2>/dev/null || true
+}
+
+# ---- validation ----------------------------------------------------------
+validate_tools() {
+    local missing=()
+    command -v claude &>/dev/null || missing+=("claude")
+    command -v codex &>/dev/null || missing+=("codex")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo -e "${RED}ERROR: Missing required tools: ${missing[*]}${NC}"
+        echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
+        echo "  Install Codex CLI:   https://github.com/openai/codex"
+        exit 1
+    fi
+}
+
+validate_prompts() {
+    local missing=()
+    if [[ "$SKIP_REFINEMENT" == false ]]; then
+        [[ -f "$CLAUDE_REFINEMENT_PROMPT" ]] || missing+=("$CLAUDE_REFINEMENT_PROMPT")
+    fi
+    [[ -f "$CLAUDE_REVIEW_PROMPT" ]] || missing+=("$CLAUDE_REVIEW_PROMPT")
+    [[ -f "$CODEX_REVIEW_PROMPT" ]] || missing+=("$CODEX_REVIEW_PROMPT")
+    [[ -f "$CODEX_FOLLOWUP_PROMPT" ]] || missing+=("$CODEX_FOLLOWUP_PROMPT")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo -e "${RED}ERROR: Missing prompt files:${NC}"
+        local f
+        for f in "${missing[@]}"; do
+            echo "  $f"
+        done
+        echo ""
+        echo "Run the ai-coding-setup installer to install them:"
+        echo "  https://github.com/rlorenzo/ai-coding-setup"
+        exit 1
+    fi
+}
+
+# ---- temp directory with cleanup -----------------------------------------
+TMPDIR_REVIEW=""
+
+setup_temp() {
+    TMPDIR_REVIEW=$(mktemp -d "${TMPDIR:-/tmp}/code-review-loop.XXXXXX")
+}
+
+cleanup() {
+    [[ -n "$TMPDIR_REVIEW" ]] && rm -rf "$TMPDIR_REVIEW"
+}
+trap cleanup EXIT
+
+# ---- main ----------------------------------------------------------------
+validate_tools
+validate_prompts
+
+# Detect partially staged files (some hunks staged, others not) — these would
+# cause the staging logic to either miss review fixes or pull in unrelated hunks.
+partially_staged=$(comm -12 \
+    <(git diff --staged --name-only 2>/dev/null | sort) \
+    <(git diff --name-only 2>/dev/null | sort)) || true
+if [[ -n "$partially_staged" ]]; then
+    echo -e "${RED}ERROR: Partially staged files detected:${NC}"
+    while IFS= read -r f; do
+        echo "  $f"
+    done <<< "$partially_staged"
+    echo ""
+    echo "Fully stage or unstage these files before running the review loop:"
+    echo "  git add <file>        # stage all changes"
+    echo "  git checkout -- <file> # discard unstaged changes"
+    exit 1
+fi
+
+setup_temp
+
+echo ""
+echo -e "${MAGENTA}========================================${NC}"
+echo -e "${MAGENTA} Code Review Loop${NC}"
+echo -e "${MAGENTA}========================================${NC}"
+echo " Max iterations: $MAX_ITERATIONS"
+echo " Skip refinement: $SKIP_REFINEMENT"
+
+start_time=$(date +%s)
+
+# Capture initial state for the summary
+initial_diff=$(git diff --staged --stat 2>&1) || true
+initial_diff_full=$(git diff --staged 2>&1) || true
+initial_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
+
+# Tracked unstaged edits make it impossible to safely separate pre-existing
+# work from review-loop fixes in the same file, so reject them up front.
+tracked_unstaged=$(git diff --name-only 2>/dev/null | sort) || true
+if [[ -n "$tracked_unstaged" ]]; then
+    echo -e "${RED}ERROR: Unstaged tracked changes detected:${NC}"
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        echo "  $f"
+    done <<< "$tracked_unstaged"
+    echo ""
+    echo "Commit, stash, or fully stage these files before running the review loop."
+    exit 1
+fi
+
+# Baseline untracked files — only files created *during* the loop should be staged
+BASELINE_UNTRACKED="$TMPDIR_REVIEW/baseline-untracked.txt"
+snapshot_untracked > "$BASELINE_UNTRACKED"
+
+# Collect iteration data for the final summary prompt
+iteration_log=""
+
+# ---- Step 1: Code Refinement --------------------------------------------
+if [[ "$SKIP_REFINEMENT" == false ]]; then
+    write_step "1" "Claude: Code Refinement (lint, KISS/DRY/YAGNI, tests)"
+    write_status "This may take several minutes..." "$DIM"
+
+    refinement_prompt=$(read_prompt_file "$CLAUDE_REFINEMENT_PROMPT")
+
+    local_exit=0
+    claude -p "$refinement_prompt" --allowedTools "$CLAUDE_TOOLS" || local_exit=$?
+
+    if [[ $local_exit -ne 0 ]]; then
+        write_status "Claude code-refinement exited with code $local_exit" "$YELLOW"
+    else
+        write_status "Code refinement complete" "$GREEN"
+    fi
+
+    # Capture what refinement changed
+    refinement_diff=$(git diff --stat 2>&1) || true
+    if [[ -n "$refinement_diff" ]]; then
+        iteration_log+=$'\n### Code Refinement\n'
+        iteration_log+="Files changed:"$'\n'"$refinement_diff"$'\n'
+    fi
+fi
+
+# ---- Step 2: Stage changes ----------------------------------------------
+write_step "2" "Staging changed files"
+stage_review_changes
+staged_count=$(git diff --staged --name-only | wc -l | tr -d '[:space:]')
+write_status "$staged_count files staged"
+
+if [[ "$staged_count" -eq 0 ]]; then
+    write_status "No staged changes to review. Exiting." "$YELLOW"
+    exit 0
+fi
+
+# ---- Step 3: Initial Codex review ---------------------------------------
+write_step "3" "Codex: Initial Code Review"
+rm -f "$REVIEW_FILE" 2>/dev/null || true
+write_status "This may take several minutes..." "$DIM"
+
+codex_prompt=$(read_prompt_file "$CODEX_REVIEW_PROMPT")
+codex_task="Execute the following code review task now. Do not introduce yourself. Begin immediately.
+IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts.
+
+$codex_prompt"
+
+pre_codex_snapshot="$TMPDIR_REVIEW/pre-codex-initial.txt"
+snapshot_untracked > "$pre_codex_snapshot"
+
+local_exit=0
+echo "$codex_task" | codex exec --full-auto - || local_exit=$?
+cleanup_codex_artifacts "$pre_codex_snapshot"
+
+if [[ $local_exit -ne 0 ]]; then
+    write_status "Codex code review exited with code $local_exit" "$YELLOW"
+fi
+
+if [[ ! -f "$REVIEW_FILE" ]]; then
+    write_status "No review file created — Codex may have failed" "$RED"
+    echo ""
+    echo -e "${MAGENTA}========================================${NC}"
+    echo -e "${MAGENTA} Code Review Loop Complete${NC}"
+    echo -e "${MAGENTA}========================================${NC}"
+    echo " Status   : ERROR (review file not generated)"
+    echo " Cycles   : 0 / $MAX_ITERATIONS"
+    echo ""
+    echo -e "${RED}Codex did not produce a review file. Changes are NOT reviewed.${NC}"
+    exit 1
+fi
+
+counts=$(get_review_issue_counts)
+write_status "Initial review: $counts"
+iteration_log+=$'\n### Initial Review\n'
+iteration_log+="Issue counts: $counts"$'\n'
+
+# ---- Feedback loop -------------------------------------------------------
+iteration=0
+while [[ $iteration -lt $MAX_ITERATIONS ]]; do
+    if test_review_clean; then
+        echo ""
+        write_status "Review is clean — no High or Medium issues!" "$GREEN"
+        break
+    fi
+
+    iteration=$((iteration + 1))
+    echo ""
+    echo -e "${YELLOW}=== Review Cycle $iteration of $MAX_ITERATIONS ===${NC}"
+
+    # Claude responds to review findings
+    write_step "4.$iteration" "Claude: Responding to Code Review"
+    write_status "This may take several minutes..." "$DIM"
+
+    review_prompt=$(read_prompt_file "$CLAUDE_REVIEW_PROMPT")
+    context_prompt="$review_prompt
+
+CONTEXT: This is review cycle $iteration of $MAX_ITERATIONS in an automated feedback loop.
+The file agent-code-review.md contains the reviewer's findings.
+Read it, evaluate each finding, implement valid fixes, and respond inline per the instructions above."
+
+    local_exit=0
+    claude -p "$context_prompt" --allowedTools "$CLAUDE_TOOLS" || local_exit=$?
+
+    if [[ $local_exit -ne 0 ]]; then
+        write_status "Claude code-review response exited with code $local_exit" "$YELLOW"
+    fi
+
+    # Capture what this cycle changed
+    cycle_diff=$(git diff --stat 2>&1) || true
+
+    # Stage changes from Claude's fixes
+    write_step "5.$iteration" "Staging changes"
+    stage_review_changes
+
+    # Codex follow-up review
+    write_step "6.$iteration" "Codex: Follow-up Review"
+    write_status "This may take several minutes..." "$DIM"
+
+    followup_prompt=$(read_prompt_file "$CODEX_FOLLOWUP_PROMPT")
+    followup_task="Execute the following code review follow-up task now. Do not introduce yourself. Begin immediately.
+IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings.
+
+$followup_prompt"
+
+    pre_codex_snapshot="$TMPDIR_REVIEW/pre-codex-cycle-$iteration.txt"
+    snapshot_untracked > "$pre_codex_snapshot"
+
+    local_exit=0
+    echo "$followup_task" | codex exec --full-auto - || local_exit=$?
+    cleanup_codex_artifacts "$pre_codex_snapshot"
+
+    if [[ $local_exit -ne 0 ]]; then
+        write_status "Codex follow-up review failed (exit $local_exit) — aborting review loop" "$YELLOW"
+        break
+    fi
+
+    counts=$(get_review_issue_counts)
+    write_status "After cycle $iteration: $counts"
+
+    iteration_log+=$'\n### Cycle '"$iteration"$'\n'
+    iteration_log+="Issue counts: $counts"$'\n'
+    if [[ -n "${cycle_diff:-}" ]]; then
+        iteration_log+="Files changed:"$'\n'"$cycle_diff"$'\n'
+    fi
+done
+
+# ---- Final summary via Claude --------------------------------------------
+end_time=$(date +%s)
+elapsed_secs=$((end_time - start_time))
+elapsed_min=$((elapsed_secs / 60))
+elapsed_remainder=$((elapsed_secs % 60))
+elapsed_display="${elapsed_min}m ${elapsed_remainder}s"
+
+is_clean=false
+test_review_clean && is_clean=true
+
+final_diff=$(git diff --staged --stat 2>&1) || true
+final_diff_full=$(git diff --staged 2>&1) || true
+final_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
+review_created_files=$(comm -13 <(printf '%s\n' "$initial_added_files") <(printf '%s\n' "$final_added_files")) || true
+
+# Read the final review document
+final_review=""
+if [[ -f "$REVIEW_FILE" ]]; then
+    final_review=$(<"$REVIEW_FILE")
+fi
+
+# Write full diffs to temp files for the summary agent to reference
+initial_diff_file="$TMPDIR_REVIEW/review-initial-diff.patch"
+final_diff_file="$TMPDIR_REVIEW/review-final-diff.patch"
+printf '%s' "$initial_diff_full" > "$initial_diff_file"
+printf '%s' "$final_diff_full" > "$final_diff_file"
+write_status "Full diffs saved to temp files for summary agent" "$DIM"
+
+if $is_clean; then
+    final_status="CLEAN - all issues resolved"
+else
+    final_status="MAX ITERATIONS REACHED - some issues remain"
+fi
+
+write_step "Final" "Claude: Writing improvement summary"
+
+summary_prompt="Write a narrative summary of code improvements to the file agent-review-summary.md in the project root.
+
+This was an automated code review loop that ran $iteration cycle(s) in $elapsed_display.
+Final status: $final_status
+
+## Initial Staged Diff (before review loop)
+This is what was staged BEFORE the review loop started — the original author's work:
+$initial_diff
+Full diff available at: $initial_diff_file
+
+## Iteration Log
+$iteration_log
+
+## Final Review Document
+$final_review
+
+## Final Staged Diff (after review loop)
+$final_diff
+Full diff available at: $final_diff_file
+
+## Files Created During Review Loop
+$review_created_files
+
+## Instructions for the summary
+
+Your job is to summarize what the CODE REVIEW LOOP changed — NOT the original authored code.
+Compare the initial diff (before) with the final diff (after) to identify what the review cycle added, fixed, or improved on top of the original work.
+
+Write agent-review-summary.md with this structure:
+
+1. **Overview** - one paragraph on what the review loop accomplished on top of the original changes
+2. **Improvements Made** - narrative bullets describing what the review loop improved, what gaps it closed, what security or quality issues it fixed. Focus on the WHY and WHAT, not file names. These should only cover changes introduced by the review cycle, not the original authored work.
+3. **Created Files** - list files created by the review loop beyond the original authored changes. If none, say "None".
+4. **Remaining Items** (if any) - anything deferred or unresolved from the review
+5. **Files Changed** - a simple list of files modified during the review loop (not files that were only in the original diff)
+6. **Metrics** - cycles run, duration, final issue counts
+
+Be concise and focus on the substance of review-driven improvements, not the original feature work or process details."
+
+local_exit=0
+claude -p "$summary_prompt" --allowedTools "Read,Write,Grep,Glob" || local_exit=$?
+
+# ---- Done ----------------------------------------------------------------
+echo ""
+echo -e "${MAGENTA}========================================${NC}"
+echo -e "${MAGENTA} Code Review Loop Complete${NC}"
+echo -e "${MAGENTA}========================================${NC}"
+
+if $is_clean; then
+    echo " Status   : CLEAN"
+else
+    echo " Status   : NEEDS REVIEW"
+fi
+echo " Cycles   : $iteration / $MAX_ITERATIONS"
+echo " Duration : $elapsed_display"
+echo ""
+echo -e " Review   : agent-code-review.md"
+echo -e " Summary  : agent-review-summary.md"
+echo ""
+
+# Keep the review file as a final artifact regardless of verdict.
+# A clean report is still useful for auditing and downstream automation.
+
+echo -e "${CYAN}Waiting for manual review.${NC}"
