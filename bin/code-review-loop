@@ -519,7 +519,7 @@ Write agent-review-summary.md with this structure:
 
 1. **Overview** - one paragraph on what the review loop accomplished on top of the original changes
 2. **Improvements Made** - narrative bullets describing what the review loop improved, what gaps it closed, what security or quality issues it fixed. Focus on the WHY and WHAT, not file names. These should only cover changes introduced by the review cycle, not the original authored work.
-3. **Created Files** - list files created by the review loop beyond the original authored changes. If none, say "None".
+3. **Created Files** - list files created by the review loop beyond the original authored changes. If none, say \"None\".
 4. **Remaining Items** (if any) - anything deferred or unresolved from the review
 5. **Files Changed** - a simple list of files modified during the review loop (not files that were only in the original diff)
 6. **Metrics** - cycles run, duration, final issue counts

@@ -1,3 +1,5 @@
+# Code Refinement
+
 Review the staged files to ensure the changes adhere to the KISS, DRY, and YAGNI principles. Confirm that Clean Code standards are met (including clear, consistent naming and comments where needed).
 
 Check for opportunities to use established framework utilities, composables, or library functions instead of hand-rolled logic. If the staged code reimplements behavior that the project's framework or core libraries already provide, flag it and suggest the existing alternative.

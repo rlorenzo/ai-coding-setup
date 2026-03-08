@@ -9,97 +9,44 @@ prompt = """
 
 ## Instructions
 
-Run this workflow in a loop (max 5 iterations) until no unresolved actionable comments remain.
+Extract repo owner/name from `gh repo view --json owner,name`. Run this workflow in a loop (max 5 iterations).
 
-### Step 1: Check CI status
+### 1. Fix failing CI
 
-Run `gh pr checks` on the PR. If any checks are failing, fetch logs with `gh run view <run_id> --log-failed`, fix the issue, commit, push, and wait for CI to pass before proceeding.
+Run `gh pr checks`. If anything fails, fetch logs with `gh run view <run_id> --log-failed`, fix, commit, push, and wait for green before proceeding.
 
-### Step 2: Fetch unresolved review comments
+### 2. Ensure bot review covers latest commit
 
-Extract repo owner/name from `gh repo view --json owner,name`.
+Get the PR's latest commit SHA and each bot reviewer's most recent `commit_id`. Bots are logins ending in `[bot]`.
 
-```bash
-gh api graphql -f query='
-{
-  repository(owner: "{owner}", name: "{repo}") {
-    pullRequest(number: {PR_NUMBER}) {
-      reviewThreads(first: 50) {
-        nodes {
-          id
-          isResolved
-          comments(first: 10) {
-            nodes {
-              databaseId
-              body
-              path
-              line
-            }
-          }
-        }
-      }
-    }
-  }
-}'
-```
+If no bot reviews exist or none match the latest SHA, request review via `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/requested_reviewers -X POST -f "reviewers[]=<bot>"` and poll every 60s (first check at 8 min, timeout 15 min). Stop and tell the user to retry later if no review arrives.
 
-Filter to unresolved threads only. If none, report success and stop.
+### 3. Fetch unresolved review threads
 
-### Step 3: Classify each comment
+Use the `reviewThreads` GraphQL query (fields: `id`, `isResolved`, `comments.nodes.{databaseId, body, path, line, author.login}`). Filter to unresolved threads only.
 
-Read the referenced file and classify each unresolved comment:
+**Exit condition:** If zero unresolved threads and a bot review is confirmed on current HEAD, report success and stop.
 
-- **Already addressed** — current code handles it. Resolve silently.
-- **Inaccurate** — comment misunderstands the code. Reply with brief explanation, then resolve.
-- **Informational** — no action needed. Resolve silently.
-- **Valid fix** — real issue needing a code change. Implement it.
-- **Enhancement** — nice-to-have. Implement if straightforward, otherwise leave open.
+### 4. Classify and resolve comments
 
-### Step 4: Resolve non-actionable threads
+For each unresolved comment, read the referenced file and classify it:
 
-Batch-resolve threads using GraphQL:
+- **Already addressed / Informational** — resolve the thread silently.
+- **Inaccurate** — reply with a brief explanation, then resolve.
+- **Valid fix** — implement the minimal code change.
+- **Enhancement** — implement if straightforward, otherwise leave open.
 
-```bash
-gh api graphql -f query='mutation {
-  t1: resolveReviewThread(input: {threadId: "THREAD_ID_1"}) { thread { isResolved } }
-  t2: resolveReviewThread(input: {threadId: "THREAD_ID_2"}) { thread { isResolved } }
-}'
-```
+Batch-resolve non-actionable threads via `resolveReviewThread` GraphQL mutations.
 
-For inaccurate comments, reply first:
+### 5. Push fixes
 
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/comments/{comment_id}/replies \
-  -X POST -f body="Not applicable — <brief explanation>."
-```
+Stage changed files, commit with a conventional prefix (`fix:`, `refactor:`, etc.), push, and verify CI is green. Resolve the fixed threads.
 
-### Step 5: Implement fixes and push
+### 6. Request bot re-review and wait
 
-For each valid fix: read the file, implement the minimal change. After all fixes, run the project's linter(s) and fix any violations. Stage specific files, commit with a conventional prefix (`fix:`, `refactor:`, etc.), and push. Verify CI passes after push — if failing, fetch logs, fix, and re-push until green. Then resolve the fixed threads using the same batch mutation from Step 4.
+Request re-review from the same bots found in step 2. Poll every 60s (first check at 8 min, timeout 15 min) until a new review's `commit_id` matches HEAD. If timeout, tell user to re-run `/review-pr` later.
 
-### Step 6: Request bot re-review
+### 7. Loop
 
-Detect bot reviewers (logins ending in `[bot]`):
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-  --jq '[.[].user.login] | unique | map(select(endswith("[bot]"))) | .[]'
-```
-
-For each bot, request re-review:
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/requested_reviewers \
-  -X POST -f "reviewers[]=<bot_login>"
-```
-
-If no bot reviewers found, skip to summary.
-
-### Step 7: Wait for bot review
-
-Poll every 60s for up to 15 min (first check after 8 min). Compare the latest bot review `submitted_at` timestamp against when re-review was requested. If no response after 15 min, tell the user to re-run `/review-pr` later.
-
-### Step 8: Loop or finish
-
-If iteration 5 or no new comments, stop. Otherwise loop back to Step 1. Report summary: threads resolved, fixes made, threads remaining, CI status.
+After the bot review arrives, go back to **step 3**. Only declare success when step 3 finds zero unresolved threads with a confirmed bot review on HEAD. Stop at iteration 5. Report summary: threads resolved, fixes made, threads remaining, CI status.
 """
