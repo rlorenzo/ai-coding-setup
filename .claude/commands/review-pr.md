@@ -2,43 +2,39 @@
 
 Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
 
-## Tooling Constraint
+## Constraints
 
-ALL shell operations MUST use `gh api` with `--jq` / `--paginate` and bash only. Never write Python, Node, or any other script file. Never use `curl` for GitHub API calls. Polling loops must be bash `while`/`sleep` inline — no script files.
+ALL shell operations: `gh api` with `--jq`/`--paginate` and bash only. No Python/Node/script files. No `curl` for GitHub API. Polling loops must be inline bash `while`/`sleep`.
 
 ## Arguments
 
-- `$ARGUMENTS`: The PR number. If omitted, auto-detect via `gh pr view --json number -q .number`.
+- `$ARGUMENTS`: PR number (default: auto-detect via `gh pr view --json number -q .number`).
 
-## Instructions
+## Setup
 
-Extract repo owner/name from `gh repo view --json owner,name`. Before iteration 1, run: `IGNORED_FILE=".review-pr-ignored-${PR_NUMBER}"; touch "$IGNORED_FILE"`. This file persists across all loop iterations. Run this workflow in a loop (max 5 iterations). **Cleanup:** When the workflow ends (success, timeout, or iteration limit), delete `$IGNORED_FILE`.
+Extract owner/name from `gh repo view --json owner,name`. Set `IGNORED_FILE=".review-pr-ignored-${PR_NUMBER}"` and `touch` it. Run the workflow loop (max 5 iterations). Delete `$IGNORED_FILE` on exit.
+
+## Workflow
 
 ### 1. Fix failing CI
 
-Run `gh pr checks`. If anything fails, fetch logs with `gh run view <run_id> --log-failed`, fix, commit, push, and wait for green before proceeding.
+Run `gh pr checks`. On failure: `gh run view <run_id> --log-failed`, fix, commit, push, wait for green.
 
 ### 2. Ensure bot review covers latest commit
 
-Get the PR's latest commit SHA via `gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid'`. Bots are logins ending in `[bot]`. Get their most recent reviews:
+Get HEAD SHA: `gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid'`. Bots = logins ending in `[bot]`. Fetch their latest reviews:
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
   --jq '[.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login) | map(max_by(.submitted_at))'
 ```
 
-If no bot reviews exist or none match the latest SHA, request review:
+If no bot review matches HEAD, request one and poll (first check 8 min, timeout 15 min, poll 60 s). GitHub's REST API fully supports requesting reviews from bot accounts — do not skip this.
 
 ```bash
 gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/requested_reviewers \
   -X POST -f "reviewers[]={bot_login}"
-```
 
-NOTE: GitHub's REST API fully supports requesting and re-requesting reviews from bot accounts. Do not skip this step or assume it is unsupported.
-
-Poll every 60s using bash (first check at 8 min, timeout 15 min):
-
-```bash
 end=$((SECONDS+900)); sleep 480
 while [ $SECONDS -lt $end ]; do
   commit_id=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
@@ -48,13 +44,11 @@ while [ $SECONDS -lt $end ]; do
 done
 ```
 
-If no review arrives by timeout, tell the user to retry later and stop.
+Timeout → tell user to retry later and stop.
 
-### 3. Fetch unresolved review threads
+### 3. Fetch unresolved threads
 
-ALWAYS re-fetch fresh on every iteration — never reuse data from a prior loop pass.
-
-Use `gh api graphql --paginate --slurp` with `$endCursor` pagination:
+ALWAYS re-fetch fresh each iteration. Use `gh api graphql --paginate --slurp` with `$endCursor`:
 
 ```bash
 gh api graphql --paginate --slurp \
@@ -72,38 +66,24 @@ gh api graphql --paginate --slurp \
   --jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)]'
 ```
 
-**Auto-resolve ignored threads:** For each unresolved thread, check if its first comment's body matches any entry in `$IGNORED_FILE` via `grep -qxF "$body" "$IGNORED_FILE"`. If it matches, resolve immediately via `resolveReviewThread` GraphQL mutation without classifying.
+**Auto-resolve:** If a thread's first comment body matches any `$IGNORED_FILE` entry (`grep -qxF`), resolve via `resolveReviewThread` mutation without classifying.
 
-**Exit condition:** If zero unresolved threads remain (after auto-resolving ignored ones) and a bot review is confirmed on current HEAD, report success and stop. If ALL threads were auto-resolved from `$IGNORED_FILE`, this also counts as success — the bot is cycling on already-handled issues.
+**Exit:** Zero unresolved threads + bot review on HEAD → success. Stop.
 
-### 4. Classify and resolve comments
+### 4. Classify and resolve
 
-For each remaining unresolved thread, read the referenced file and classify:
+Read referenced file + context for each remaining thread, then classify:
 
-- **Already addressed / Informational** — append the first comment's body to `$IGNORED_FILE` (`printf '%s\n' "$body" >> "$IGNORED_FILE"`), then resolve the thread silently.
-- **Inaccurate** — append the first comment's body to `$IGNORED_FILE`, reply with a brief explanation, then resolve.
-- **Valid fix** — implement the minimal code change.
-- **Enhancement** — implement if straightforward, otherwise leave open.
-
-Batch-resolve non-actionable threads via `resolveReviewThread` GraphQL mutations.
+- **Already addressed / Informational / Inaccurate** — append body to `$IGNORED_FILE`, resolve (reply with brief explanation if inaccurate).
+- **Valid fix** — implement minimal change. Must meet ALL: (1) fixes a real bug — wrong behavior, data loss, security, crash, or race condition; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
+- **Nitpick / Low-value** — resolve WITHOUT implementing. Includes: style preferences not enforced by linter, docstring suggestions on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append body to `$IGNORED_FILE`, reply with one-line rationale, resolve.
 
 ### 5. Push fixes
 
-Stage changed files, commit with a conventional prefix (`fix:`, `refactor:`, etc.), push, and verify CI is green. Resolve the fixed threads.
+Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed threads.
 
-### 6. Request bot re-review and wait
+### 6. Re-request bot review and loop
 
-Re-request review from the same bot logins identified in step 2:
+Re-request review from the same bots and poll using the same snippet from step 2. Timeout → tell user to re-run `/review-pr`. Success → go back to step 3.
 
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/requested_reviewers \
-  -X POST -f "reviewers[]={bot_login}"
-```
-
-NOTE: Re-requesting reviews from bot accounts IS supported by the GitHub REST API. Do not skip this step or assume it is unsupported.
-
-Poll every 60s using bash (first check at 8 min, timeout 15 min) until the bot's latest review `commit_id` matches HEAD. Use the same polling snippet from step 2. If timeout, tell the user to re-run `/review-pr` later.
-
-### 7. Loop
-
-After the bot review arrives, go back to **step 3**. Declare success when step 3 finds zero unresolved threads with a confirmed bot review on HEAD, or all remaining threads were auto-resolved from `$IGNORED_FILE`. Stop at iteration 5. Report summary: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.
+Declare success when step 3 finds zero unresolved threads with bot review on HEAD. Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.

@@ -43,6 +43,16 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 - Gemini CLI: `/review-pr [PR_NUMBER]`
 - Codex CLI: `$review-pr [PR_NUMBER]`
 
+### /commitmsg
+
+Propose a conventional commit message for the currently staged changes. Detects ticket IDs from branch names and follows the project's recent commit style.
+
+**Usage:**
+
+- Claude Code: `/commitmsg`
+- Gemini CLI: `/commitmsg`
+- Codex CLI: `$commitmsg`
+
 ## How It Works
 
 - Each AI tool has its own command format, so commands are maintained as separate source files per tool.
