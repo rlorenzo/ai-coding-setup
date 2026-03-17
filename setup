@@ -1009,9 +1009,9 @@ done
 # Shared prompts are agent-agnostic and consumed by the review loop scripts.
 # Installed to ~/.local/share/ai-coding-setup/prompts/ via symlinks.
 _prompts_dest="$HOME/.local/share/ai-coding-setup/prompts"
-_prompts_src_dir="$(cd "$(dirname "prompts/code-review.md")" && pwd)"
 
 if [[ -d "prompts" ]]; then
+    _prompts_src_dir="$(cd "$(dirname "prompts/code-review.md")" && pwd)"
     mkdir -p "$_prompts_dest"
     for _prompt_file in prompts/*.md; do
         [[ -f "$_prompt_file" ]] || continue
