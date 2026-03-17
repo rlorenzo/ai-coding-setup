@@ -4,6 +4,8 @@ Propose a single git commit message for the currently staged changes.
 
 ## Gather context
 
+Run these commands to understand the changes:
+
 - `git diff --staged` — the actual changes
 - `git status -s` — staged file list
 - `git log -n 20 --oneline` — recent style and to avoid repetition

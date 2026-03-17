@@ -1,0 +1,15 @@
+description = "Review staged files for code quality (KISS, DRY, YAGNI, Clean Code) and fix linting issues."
+
+prompt = """
+# Code Refinement
+
+Review the staged files to ensure the changes adhere to the KISS, DRY, and YAGNI principles. Confirm that Clean Code standards are met (including clear, consistent naming and comments where needed).
+
+Check for opportunities to use established framework utilities, composables, or library functions instead of hand-rolled logic. If the staged code reimplements behavior that the project's framework or core libraries already provide, flag it and suggest the existing alternative.
+
+Verify that the project's UI framework components and utility classes are used where appropriate instead of custom CSS or HTML elements. Flag any custom styling that duplicates what the framework already provides.
+
+Run the project's linting command and fix all reported errors and warnings. Avoid using lint-suppression comments (e.g., eslint-disable, noqa, @ts-ignore) to make the lint pass unless absolutely necessary, and only with a clear justification in the code.
+
+Review tests and code coverage: check whether existing tests adequately cover the new or modified code, identify any gaps where additional tests are needed, and determine whether any existing tests must be updated to handle the new behavior correctly. When finished, ensure everything is ready for a high-quality code review.
+"""
