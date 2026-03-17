@@ -30,18 +30,9 @@ The script detects which AI tools you have installed and walks you through insta
 | Claude Code | Markdown (`.md`) | `.claude/commands/` | `~/.claude/commands/` |
 | Gemini CLI | TOML (`.toml`) | `.gemini/commands/` | `~/.gemini/commands/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
+| Shared prompts | Markdown (`.md`) | `prompts/` | `~/.local/share/ai-coding-setup/prompts/` |
 
 ## Available Commands
-
-### /review-pr
-
-Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
-
-**Usage:**
-
-- Claude Code: `/review-pr [PR_NUMBER]`
-- Gemini CLI: `/review-pr [PR_NUMBER]`
-- Codex CLI: `$review-pr [PR_NUMBER]`
 
 ### /commitmsg
 
@@ -53,10 +44,54 @@ Propose a conventional commit message for the currently staged changes. Detects 
 - Gemini CLI: `/commitmsg`
 - Codex CLI: `$commitmsg`
 
+### /review-pr
+
+Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
+
+**Usage:**
+
+- Claude Code: `/review-pr [PR_NUMBER]`
+- Gemini CLI: `/review-pr [PR_NUMBER]`
+- Codex CLI: `$review-pr [PR_NUMBER]`
+
+### /code-refinement
+
+Review staged files for code quality (KISS, DRY, YAGNI, Clean Code), fix linting issues, and check test coverage.
+
+**Usage:**
+
+- Claude Code: `/code-refinement`
+- Gemini CLI: `/code-refinement`
+- Codex CLI: `$code-refinement`
+
+### /code-review
+
+Run a standalone code review on staged changes. Writes findings to `agent-code-review.md`.
+
+**Usage:**
+
+- Claude Code: `/code-review`
+- Gemini CLI: `/code-review`
+- Codex CLI: `$code-review`
+
+## Shared Prompts
+
+The `prompts/` directory contains agent-agnostic prompts consumed by the review loop scripts. These are not interactive commands — they are automation prompts read by `code-review-loop` and `plan-review-loop`.
+
+| Prompt | Role |
+| --- | --- |
+| `code-review.md` | Initial code reviewer |
+| `code-review-followup.md` | Reviewer's follow-up review |
+| `code-review-response.md` | Editor responds to review findings |
+| `code-refinement.md` | Lint/refine pre-review step |
+| `plan-review.md` | Initial plan reviewer |
+| `plan-review-followup.md` | Plan reviewer's follow-up |
+
 ## How It Works
 
 - Each AI tool has its own command format, so commands are maintained as separate source files per tool.
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
+- Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
 
 ## MCP Server Configuration

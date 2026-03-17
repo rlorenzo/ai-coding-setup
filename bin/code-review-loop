@@ -1,46 +1,51 @@
 #!/usr/bin/env bash
 # source: ai-coding-setup
 # ---------------------------------------------------------------------------
-# Automated code review feedback loop between Claude Code and OpenAI Codex.
+# Automated code review feedback loop.
 #
 # Orchestrates a multi-step review cycle:
-#   1. Claude runs code-refinement (lint, KISS/DRY/YAGNI, test coverage)
+#   1. Editor agent runs code-refinement (lint, KISS/DRY/YAGNI, test coverage)
 #   2. Stage changes
-#   3. Codex reviews staged changes -> agent-code-review.md
-#   4. If issues found: Claude responds, stages fixes, Codex re-reviews
+#   3. Reviewer agent reviews staged changes -> agent-code-review.md
+#   4. If issues found: editor responds, stages fixes, reviewer re-reviews
 #   5. Loop until clean or max iterations reached
 #   6. Claude writes a narrative summary to agent-review-summary.md
+#
+# Agent roles are configurable via ~/.ai-coding-setup.conf and CLI flags.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-# ---- colors (disabled when stdout is not a terminal) --------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-DIM='\033[2m'
-NC='\033[0m'
+# ---- load shared library --------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/lib-review-loop
+source "$SCRIPT_DIR/../lib/lib-review-loop"
 
-if [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' CYAN='' MAGENTA='' DIM='' NC=''
-fi
+# ---- defaults (hardcoded -> config file -> CLI flags) ---------------------
+EDITOR_AGENT="claude"
+REVIEWER_AGENT="codex"
+load_config
 
-# ---- defaults ------------------------------------------------------------
 MAX_ITERATIONS=5
 SKIP_REFINEMENT=false
+
+# Track whether CLI explicitly set agents (to preserve override over config)
+_CLI_EDITOR="" _CLI_REVIEWER=""
 
 # ---- usage ---------------------------------------------------------------
 usage() {
     cat <<'EOF'
 Usage: code-review-loop [OPTIONS]
 
-Orchestrates a code review feedback loop between Claude Code and Codex CLI.
+Orchestrates a code review feedback loop between two AI agents.
 
 Options:
   -m, --max-iterations N   Maximum review-fix-review cycles (default: 5)
-  -s, --skip-refinement    Skip the initial Claude code-refinement step
+  -s, --skip-refinement    Skip the initial code-refinement step
+  -e, --editor AGENT       Agent for editing/implementation (default: claude)
+  -r, --reviewer AGENT     Agent for code review (default: codex)
   -h, --help               Show this help message
+
+Agents: claude, codex, gemini
 EOF
     exit 0
 }
@@ -50,87 +55,34 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -m|--max-iterations) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; MAX_ITERATIONS="$2"; shift 2 ;;
         -s|--skip-refinement) SKIP_REFINEMENT=true; shift ;;
+        -e|--editor)   [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_EDITOR="$2"; shift 2 ;;
+        -r|--reviewer) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_REVIEWER="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo -e "${RED}Unknown option: $1${NC}"; usage ;;
     esac
 done
 
+# CLI flags override config file
+[[ -n "$_CLI_EDITOR" ]]   && EDITOR_AGENT="$_CLI_EDITOR"
+[[ -n "$_CLI_REVIEWER" ]] && REVIEWER_AGENT="$_CLI_REVIEWER"
+
+validate_agent_name "$EDITOR_AGENT" "--editor"
+validate_agent_name "$REVIEWER_AGENT" "--reviewer"
+validate_positive_int "$MAX_ITERATIONS" "--max-iterations"
+
 # ---- paths ---------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
 REVIEW_FILE="$PROJECT_ROOT/agent-code-review.md"
 
-CLAUDE_REFINEMENT_PROMPT="$HOME/.claude/commands/code-refinement.md"
-CLAUDE_REVIEW_PROMPT="$HOME/.claude/commands/code-review.md"
-CODEX_REVIEW_PROMPT="$HOME/.codex/prompts/code-review.md"
-CODEX_FOLLOWUP_PROMPT="$HOME/.codex/prompts/code-review-followup.md"
+EDITOR_REFINEMENT_PROMPT="$PROMPTS_DIR/code-refinement.md"
+EDITOR_RESPONSE_PROMPT="$PROMPTS_DIR/code-review-response.md"
+REVIEWER_INITIAL_PROMPT="$PROMPTS_DIR/code-review.md"
+REVIEWER_FOLLOWUP_PROMPT="$PROMPTS_DIR/code-review-followup.md"
 
-CLAUDE_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
+EDITOR_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
+REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
 
 # ---- helpers -------------------------------------------------------------
-
-# Filenames that the review loop creates — never treat as Codex artifacts
-KNOWN_REVIEW_FILES="agent-code-review.md agent-review-summary.md"
-
-# Snapshot untracked files before a Codex run so we can detect artifacts after
-snapshot_untracked() {
-    git ls-files --others --exclude-standard 2>/dev/null | sort
-}
-
-# Remove files that appeared after a Codex run (artifacts), excluding review files
-cleanup_codex_artifacts() {
-    local before_file="$1"
-    local after
-    after=$(snapshot_untracked)
-    local new_files
-    new_files=$(comm -13 "$before_file" <(echo "$after")) || true
-
-    if [[ -n "$new_files" ]]; then
-        while IFS= read -r file; do
-            [[ -z "$file" ]] && continue
-            # Skip our own review files
-            local base
-            base=$(basename "$file")
-            if [[ " $KNOWN_REVIEW_FILES " == *" $base "* ]]; then
-                continue
-            fi
-            rm -f "$file" 2>/dev/null || true
-            write_status "Removed Codex artifact: $file" "$DIM"
-        done <<< "$new_files"
-    fi
-    rm -f "$before_file"
-}
-
-write_step() {
-    local label="$1" message="$2"
-    echo ""
-    echo -e "${CYAN}[$label] $message${NC}"
-    printf '%0.s-' {1..60}
-    echo ""
-}
-
-write_status() {
-    local message="$1" color="${2:-${NC}}"
-    echo -e "  ${color}${message}${NC}"
-}
-
-read_prompt_file() {
-    local path="$1"
-    local content
-    content=$(<"$path")
-    # Strip YAML frontmatter if present (---\n...\n---)
-    if [[ "$content" == ---* ]]; then
-        content=$(printf '%s\n' "$content" | awk '
-            NR==1 && /^---/ { skip=1; next }
-            skip && /^---/ { skip=0; next }
-            !skip { print }')
-    fi
-    # Trim leading and trailing blank lines (preserve indentation within)
-    content=$(printf '%s\n' "$content" | awk '
-        { lines[NR]=$0 }
-        /[^[:space:]]/ { if (!first) first=NR; last=NR }
-        END { for (i=first; i<=last; i++) print lines[i] }')
-    printf '%s' "$content"
-}
 
 test_review_clean() {
     [[ -f "$REVIEW_FILE" ]] || return 1
@@ -182,7 +134,7 @@ stage_review_changes() {
     fi
 
     # Stage newly created untracked files — these are legitimate fixes from
-    # Claude's refinement (new tests, helper modules, etc.).  Artifacts from
+    # the editor's refinement (new tests, helper modules, etc.).  Artifacts from
     # tools (coverage, caches) should be covered by .gitignore; the snapshot
     # already uses --exclude-standard so gitignored files are never seen here.
     local new_untracked
@@ -202,55 +154,22 @@ stage_review_changes() {
 }
 
 # ---- validation ----------------------------------------------------------
-validate_tools() {
-    local missing=()
-    command -v claude &>/dev/null || missing+=("claude")
-    command -v codex &>/dev/null || missing+=("codex")
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo -e "${RED}ERROR: Missing required tools: ${missing[*]}${NC}"
-        echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
-        echo "  Install Codex CLI:   https://github.com/openai/codex"
-        exit 1
-    fi
-}
 
-validate_prompts() {
-    local missing=()
-    if [[ "$SKIP_REFINEMENT" == false ]]; then
-        [[ -f "$CLAUDE_REFINEMENT_PROMPT" ]] || missing+=("$CLAUDE_REFINEMENT_PROMPT")
-    fi
-    [[ -f "$CLAUDE_REVIEW_PROMPT" ]] || missing+=("$CLAUDE_REVIEW_PROMPT")
-    [[ -f "$CODEX_REVIEW_PROMPT" ]] || missing+=("$CODEX_REVIEW_PROMPT")
-    [[ -f "$CODEX_FOLLOWUP_PROMPT" ]] || missing+=("$CODEX_FOLLOWUP_PROMPT")
+# Build the list of required prompts (conditional on SKIP_REFINEMENT)
+_required_prompts=()
+if [[ "$SKIP_REFINEMENT" == false ]]; then
+    _required_prompts+=("$EDITOR_REFINEMENT_PROMPT")
+fi
+_required_prompts+=("$EDITOR_RESPONSE_PROMPT" "$REVIEWER_INITIAL_PROMPT" "$REVIEWER_FOLLOWUP_PROMPT")
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo -e "${RED}ERROR: Missing prompt files:${NC}"
-        local f
-        for f in "${missing[@]}"; do
-            echo "  $f"
-        done
-        echo ""
-        echo "Run the ai-coding-setup installer to install them:"
-        echo "  https://github.com/rlorenzo/ai-coding-setup"
-        exit 1
-    fi
-}
+validate_tools
+validate_prompts "${_required_prompts[@]}"
 
 # ---- temp directory with cleanup -----------------------------------------
-TMPDIR_REVIEW=""
-
-setup_temp() {
-    TMPDIR_REVIEW=$(mktemp -d "${TMPDIR:-/tmp}/code-review-loop.XXXXXX")
-}
-
-cleanup() {
-    [[ -n "$TMPDIR_REVIEW" ]] && rm -rf "$TMPDIR_REVIEW"
-}
-trap cleanup EXIT
+setup_temp "code-review-loop"
+trap cleanup_temp EXIT
 
 # ---- main ----------------------------------------------------------------
-validate_tools
-validate_prompts
 
 # Detect partially staged files (some hunks staged, others not) — these would
 # cause the staging logic to either miss review fixes or pull in unrelated hunks.
@@ -275,8 +194,10 @@ echo ""
 echo -e "${MAGENTA}========================================${NC}"
 echo -e "${MAGENTA} Code Review Loop${NC}"
 echo -e "${MAGENTA}========================================${NC}"
-echo " Max iterations: $MAX_ITERATIONS"
+echo " Max iterations : $MAX_ITERATIONS"
 echo " Skip refinement: $SKIP_REFINEMENT"
+echo " Editor         : $EDITOR_AGENT"
+echo " Reviewer       : $REVIEWER_AGENT"
 
 start_time=$(date +%s)
 
@@ -303,21 +224,39 @@ fi
 BASELINE_UNTRACKED="$TMPDIR_REVIEW/baseline-untracked.txt"
 snapshot_untracked > "$BASELINE_UNTRACKED"
 
+# ---- Safety snapshot (stash) --------------------------------------------
+# Save a snapshot of the current staged state so the developer can restore
+# files if the review loop mangles them.  git stash create + store takes the
+# snapshot without touching the working tree or index.
+STASH_REF=""
+stash_hash=$(git stash create "code-review-loop: pre-review snapshot") || true
+if [[ -n "$stash_hash" ]]; then
+    git stash store -m "code-review-loop: pre-review snapshot" "$stash_hash"
+    # Record the stash ref so we can give a targeted restore/drop command later,
+    # even if the developer creates other stashes during the loop.
+    STASH_REF="$stash_hash"
+    write_status "Saved pre-review snapshot to stash ($stash_hash)" "$DIM"
+fi
+
 # Collect iteration data for the final summary prompt
 iteration_log=""
 
 # ---- Step 1: Code Refinement --------------------------------------------
 if [[ "$SKIP_REFINEMENT" == false ]]; then
-    write_step "1" "Claude: Code Refinement (lint, KISS/DRY/YAGNI, tests)"
+    write_step "1" "$EDITOR_AGENT: Code Refinement (lint, KISS/DRY/YAGNI, tests)"
     write_status "This may take several minutes..." "$DIM"
 
-    refinement_prompt=$(read_prompt_file "$CLAUDE_REFINEMENT_PROMPT")
+    refinement_prompt=$(read_prompt_file "$EDITOR_REFINEMENT_PROMPT")
+
+    pre_snapshot="$TMPDIR_REVIEW/pre-refinement.txt"
+    snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    claude -p "$refinement_prompt" --allowedTools "$CLAUDE_TOOLS" || local_exit=$?
+    run_agent "$EDITOR_AGENT" "$refinement_prompt" "$EDITOR_TOOLS" || local_exit=$?
+    cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "Claude code-refinement exited with code $local_exit" "$YELLOW"
+        write_status "$EDITOR_AGENT code-refinement exited with code $local_exit" "$YELLOW"
     else
         write_status "Code refinement complete" "$GREEN"
     fi
@@ -341,30 +280,29 @@ if [[ "$staged_count" -eq 0 ]]; then
     exit 0
 fi
 
-# ---- Step 3: Initial Codex review ---------------------------------------
-write_step "3" "Codex: Initial Code Review"
+# ---- Step 3: Initial review ---------------------------------------------
+write_step "3" "$REVIEWER_AGENT: Initial Code Review"
 rm -f "$REVIEW_FILE" 2>/dev/null || true
 write_status "This may take several minutes..." "$DIM"
 
-codex_prompt=$(read_prompt_file "$CODEX_REVIEW_PROMPT")
-codex_task="Execute the following code review task now. Do not introduce yourself. Begin immediately.
-IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts.
+review_prompt=$(read_prompt_file "$REVIEWER_INITIAL_PROMPT")
+review_task="$review_prompt
 
-$codex_prompt"
+IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts."
 
-pre_codex_snapshot="$TMPDIR_REVIEW/pre-codex-initial.txt"
-snapshot_untracked > "$pre_codex_snapshot"
+pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
+snapshot_untracked > "$pre_snapshot"
 
 local_exit=0
-echo "$codex_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
-cleanup_codex_artifacts "$pre_codex_snapshot"
+run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
+cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
 if [[ $local_exit -ne 0 ]]; then
-    write_status "Codex code review exited with code $local_exit" "$YELLOW"
+    write_status "$REVIEWER_AGENT code review exited with code $local_exit" "$YELLOW"
 fi
 
 if [[ ! -f "$REVIEW_FILE" ]]; then
-    write_status "No review file created — Codex may have failed" "$RED"
+    write_status "No review file created — $REVIEWER_AGENT may have failed" "$RED"
     echo ""
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${MAGENTA} Code Review Loop Complete${NC}"
@@ -372,7 +310,7 @@ if [[ ! -f "$REVIEW_FILE" ]]; then
     echo " Status   : ERROR (review file not generated)"
     echo " Cycles   : 0 / $MAX_ITERATIONS"
     echo ""
-    echo -e "${RED}Codex did not produce a review file. Changes are NOT reviewed.${NC}"
+    echo -e "${RED}$REVIEWER_AGENT did not produce a review file. Changes are NOT reviewed.${NC}"
     exit 1
 fi
 
@@ -394,50 +332,53 @@ while [[ $iteration -lt $MAX_ITERATIONS ]]; do
     echo ""
     echo -e "${YELLOW}=== Review Cycle $iteration of $MAX_ITERATIONS ===${NC}"
 
-    # Claude responds to review findings
-    write_step "4.$iteration" "Claude: Responding to Code Review"
+    # Editor responds to review findings
+    write_step "4.$iteration" "$EDITOR_AGENT: Responding to Code Review"
     write_status "This may take several minutes..." "$DIM"
 
-    review_prompt=$(read_prompt_file "$CLAUDE_REVIEW_PROMPT")
-    context_prompt="$review_prompt
+    review_response_prompt=$(read_prompt_file "$EDITOR_RESPONSE_PROMPT")
+    context_prompt="$review_response_prompt
 
 CONTEXT: This is review cycle $iteration of $MAX_ITERATIONS in an automated feedback loop.
 The file agent-code-review.md contains the reviewer's findings.
 Read it, evaluate each finding, implement valid fixes, and respond inline per the instructions above."
 
+    pre_snapshot="$TMPDIR_REVIEW/pre-editor-cycle-$iteration.txt"
+    snapshot_untracked > "$pre_snapshot"
+
     local_exit=0
-    claude -p "$context_prompt" --allowedTools "$CLAUDE_TOOLS" || local_exit=$?
+    run_agent "$EDITOR_AGENT" "$context_prompt" "$EDITOR_TOOLS" || local_exit=$?
+    cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "Claude code-review response exited with code $local_exit" "$YELLOW"
+        write_status "$EDITOR_AGENT code-review response exited with code $local_exit" "$YELLOW"
     fi
 
     # Capture what this cycle changed
     cycle_diff=$(git diff --stat 2>&1) || true
 
-    # Stage changes from Claude's fixes
+    # Stage changes from editor's fixes
     write_step "5.$iteration" "Staging changes"
     stage_review_changes
 
-    # Codex follow-up review
-    write_step "6.$iteration" "Codex: Follow-up Review"
+    # Reviewer follow-up review
+    write_step "6.$iteration" "$REVIEWER_AGENT: Follow-up Review"
     write_status "This may take several minutes..." "$DIM"
 
-    followup_prompt=$(read_prompt_file "$CODEX_FOLLOWUP_PROMPT")
-    followup_task="Execute the following code review follow-up task now. Do not introduce yourself. Begin immediately.
-IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings.
+    followup_prompt=$(read_prompt_file "$REVIEWER_FOLLOWUP_PROMPT")
+    followup_task="$followup_prompt
 
-$followup_prompt"
+IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings."
 
-    pre_codex_snapshot="$TMPDIR_REVIEW/pre-codex-cycle-$iteration.txt"
-    snapshot_untracked > "$pre_codex_snapshot"
+    pre_snapshot="$TMPDIR_REVIEW/pre-review-cycle-$iteration.txt"
+    snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    echo "$followup_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
-    cleanup_codex_artifacts "$pre_codex_snapshot"
+    run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
+    cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "Codex follow-up review failed (exit $local_exit) — aborting review loop" "$YELLOW"
+        write_status "$REVIEWER_AGENT follow-up review failed (exit $local_exit) — aborting review loop" "$YELLOW"
         break
     fi
 
@@ -452,11 +393,7 @@ $followup_prompt"
 done
 
 # ---- Final summary via Claude --------------------------------------------
-end_time=$(date +%s)
-elapsed_secs=$((end_time - start_time))
-elapsed_min=$((elapsed_secs / 60))
-elapsed_remainder=$((elapsed_secs % 60))
-elapsed_display="${elapsed_min}m ${elapsed_remainder}s"
+elapsed_display=$(format_elapsed "$start_time")
 
 is_clean=false
 test_review_clean && is_clean=true
@@ -485,12 +422,13 @@ else
     final_status="MAX ITERATIONS REACHED - some issues remain"
 fi
 
-write_step "Final" "Claude: Writing improvement summary"
+write_step "Final" "$EDITOR_AGENT: Writing improvement summary"
 
 summary_prompt="Write a narrative summary of code improvements to the file agent-review-summary.md in the project root.
 
 This was an automated code review loop that ran $iteration cycle(s) in $elapsed_display.
 Final status: $final_status
+Editor agent: $EDITOR_AGENT | Reviewer agent: $REVIEWER_AGENT
 
 ## Initial Staged Diff (before review loop)
 This is what was staged BEFORE the review loop started — the original author's work:
@@ -527,7 +465,7 @@ Write agent-review-summary.md with this structure:
 Be concise and focus on the substance of review-driven improvements, not the original feature work or process details."
 
 local_exit=0
-claude -p "$summary_prompt" --allowedTools "Read,Write,Grep,Glob" || local_exit=$?
+run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
 
 # ---- Cleanup intermediate files -----------------------------------------
 # Only remove the review file when truly clean with zero issues at all severities
@@ -550,8 +488,20 @@ else
 fi
 echo " Cycles   : $iteration / $MAX_ITERATIONS"
 echo " Duration : $elapsed_display"
+echo " Editor   : $EDITOR_AGENT"
+echo " Reviewer : $REVIEWER_AGENT"
 echo ""
 [[ -f "$REVIEW_FILE" ]] && echo -e " Review   : agent-code-review.md"
 echo -e " Summary  : agent-review-summary.md"
 echo ""
+if [[ -n "$STASH_REF" ]]; then
+    # Resolve which stash@{N} entry corresponds to our saved hash
+    stash_name=$(git stash list --format='%H %gd' | awk -v ref="$STASH_REF" '$1 == ref {print $2; exit}') || true
+    if [[ -n "$stash_name" ]]; then
+        echo -e "${CYAN}A pre-review snapshot was saved to the git stash.${NC}"
+        echo "  To restore the original files:  git stash apply $stash_name"
+        echo "  To discard the snapshot:        git stash drop $stash_name"
+        echo ""
+    fi
+fi
 echo -e "${CYAN}Waiting for manual review.${NC}"

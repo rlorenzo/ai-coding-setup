@@ -1,0 +1,66 @@
+# source: ai-coding-setup
+# Read-only developer permissions for Gemini CLI (Policy Engine format).
+
+# Web tools
+[[rule]]
+toolName = ["web_fetch", "google_web_search"]
+decision = "allow"
+priority = 100
+
+# Built-in read-only tools
+[[rule]]
+toolName = ["read_file", "read_many_files", "glob", "grep_search", "list_directory"]
+decision = "allow"
+priority = 100
+
+# Git read-only commands
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = [
+  "git status", "git log", "git diff", "git show", "git blame",
+  "git ls-files", "git ls-tree", "git ls-remote",
+  "git rev-parse", "git cat-file", "git shortlog", "git describe",
+]
+decision = "allow"
+priority = 100
+
+# GitHub CLI read-only commands
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = [
+  "gh pr view", "gh pr list", "gh pr diff", "gh pr checks", "gh pr status",
+  "gh issue view", "gh issue list", "gh issue status",
+  "gh repo view", "gh repo list",
+  "gh run view", "gh run list",
+  "gh workflow view", "gh workflow list",
+  "gh search",
+]
+decision = "allow"
+priority = 100
+
+# File inspection commands
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = [
+  "cat", "head", "tail", "file", "stat", "wc",
+  "ls", "tree", "du", "diff", "shasum",
+]
+decision = "allow"
+priority = 100
+
+# Text processing commands
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["grep", "sort", "uniq", "cut", "tr", "jq"]
+decision = "allow"
+priority = 100
+
+# System info commands
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = [
+  "uname", "which", "command -v", "sw_vers",
+  "date", "ps", "id", "df",
+]
+decision = "allow"
+priority = 100

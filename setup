@@ -43,7 +43,7 @@ READONLY_COMMANDS=(
     "grep" "sort" "uniq" "cut" "tr" "jq"
     # System info
     "uname" "which" "command -v" "sw_vers"
-    "env" "printenv" "date" "ps" "id" "df"
+    "date" "ps" "id" "df"
 )
 
 # Generate tool-specific permission arrays from the shared command list.
@@ -52,18 +52,8 @@ for _cmd in "${READONLY_COMMANDS[@]}"; do
     CLAUDE_READONLY_PERMS+=("Bash($_cmd *)")
 done
 
-GEMINI_READONLY_BUILTINS=(
-    "read_file"
-    "read_many_files"
-    "glob"
-    "grep_search"
-    "list_directory"
-)
 
-GEMINI_READONLY_SHELL=()
-for _cmd in "${READONLY_COMMANDS[@]}"; do
-    GEMINI_READONLY_SHELL+=("run_shell_command($_cmd)")
-done
+
 
 # ---- MCP server definitions ------------------------------------------------
 # Format: "name|command|arg1,arg2,...|permission_pattern"
@@ -142,7 +132,7 @@ display_permission_summary() {
             git\ *)     git_cmds+=("${cmd#git }") ;;
             gh\ *)      gh_cmds+=("${cmd#gh }") ;;
             grep|sort|uniq|cut|tr|jq) text_cmds+=("$cmd") ;;
-            uname|which|command\ *|sw_vers|env|printenv|date|ps|id|df) sys_cmds+=("$cmd") ;;
+            uname|which|command\ *|sw_vers|date|ps|id|df) sys_cmds+=("$cmd") ;;
             *)          file_cmds+=("$cmd") ;;
         esac
     done
@@ -581,11 +571,17 @@ configure_claude_settings() {
 
 configure_gemini_settings() {
     local settings_file="$HOME/.gemini/settings.json"
+    local policy_dir="$HOME/.gemini/policies"
+    local policy_src=".gemini/policies/readonly-tools.toml"
+    local policy_dest="$policy_dir/readonly-tools.toml"
 
     echo ""
     echo -e "${BOLD}── Gemini CLI Settings ──${NC}"
 
-    mkdir -p "$HOME/.gemini"
+    mkdir -p "$HOME/.gemini" "$policy_dir"
+
+    # Ensure settings.json exists so downstream functions (e.g. add_mcp_permission)
+    # can safely run jq against it on fresh installs.
     if [[ ! -f "$settings_file" ]]; then
         echo '{}' > "$settings_file"
     fi
@@ -595,95 +591,83 @@ configure_gemini_settings() {
         return
     fi
 
-    local settings updated
-    settings=$(cat "$settings_file")
-    updated="$settings"
-    local changed=false
+    local actions=()
 
-    local allowed
-    allowed=$(echo "$settings" | jq -r '.tools.allowed // [] | .[]' 2>/dev/null)
-
-    # ── Check web tools ─────────────────────────────────────────
-    local web_changes=()
-
-    if ! echo "$allowed" | grep -qx "web_fetch"; then
-        web_changes+=("web_fetch")
-    fi
-    if ! echo "$allowed" | grep -qx "google_web_search"; then
-        web_changes+=("google_web_search")
-    fi
-
-    # ── Check read-only permissions ─────────────────────────────
-    local all_readonly=("${GEMINI_READONLY_BUILTINS[@]}" "${GEMINI_READONLY_SHELL[@]}")
-    local missing_perms=()
-    for perm in "${all_readonly[@]}"; do
-        if ! echo "$allowed" | grep -qxF "$perm"; then
-            missing_perms+=("$perm")
+    # ── Check if policy file needs install/update ───────────────
+    if [[ -f "$policy_src" ]]; then
+        if [[ ! -f "$policy_dest" ]]; then
+            actions+=("install_policy")
+        elif ! has_marker "$TOML_MARKER" "$policy_dest"; then
+            # Exists but not managed by us — skip unless forced
+            if $FORCE; then
+                actions+=("install_policy")
+            fi
+        elif ! is_up_to_date "$policy_src" "$policy_dest" "$TOML_MARKER"; then
+            actions+=("update_policy")
         fi
-    done
+    fi
+
+    # ── Check for deprecated tools.allowed to migrate ──────────
+    if [[ -f "$settings_file" ]] && jq empty "$settings_file" 2>/dev/null; then
+        if jq -e '.tools.allowed' "$settings_file" &>/dev/null; then
+            actions+=("migrate_tools_allowed")
+        fi
+    fi
 
     # ── Nothing to do? ──────────────────────────────────────────
-    if [[ ${#web_changes[@]} -eq 0 ]] && [[ ${#missing_perms[@]} -eq 0 ]]; then
+    if [[ ${#actions[@]} -eq 0 ]]; then
         echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
         return
     fi
 
-    # ── Prompt: web tools ───────────────────────────────────────
-    if [[ ${#web_changes[@]} -gt 0 ]]; then
+    # ── Install / update policy file ───────────────────────────
+    local policy_active=false
+    if [[ " ${actions[*]} " == *" install_policy "* ]] || [[ " ${actions[*]} " == *" update_policy "* ]]; then
+        local verb="Install"
+        [[ " ${actions[*]} " == *" update_policy "* ]] && verb="Update"
+
         echo ""
-        echo "  The following will be added to $HOME/.gemini/settings.json:"
+        echo "  Read-only permissions policy file:"
+        echo -e "    ${BOLD}$policy_dest${NC}"
         echo ""
-        for change in "${web_changes[@]}"; do
-            case "$change" in
-                web_fetch)         echo -e "  • ${BOLD}web_fetch${NC} — allow web page fetching without prompting" ;;
-                google_web_search) echo -e "  • ${BOLD}google_web_search${NC} — allow web searches without prompting" ;;
-            esac
-        done
+        echo "  Covers: web tools, built-in read tools, git, gh, file inspection,"
+        echo "  text processing, and system info commands."
         echo ""
-        if prompt_yes_no "  Apply these settings?"; then
-            for change in "${web_changes[@]}"; do
-                updated=$(echo "$updated" | jq --arg t "$change" \
-                    '.tools.allowed = ((.tools.allowed // []) + [$t])')
-            done
-            changed=true
+        if prompt_yes_no "  $verb read-only policy file?"; then
+            cp "$policy_src" "$policy_dest"
+            has_marker "$TOML_MARKER" "$policy_dest" || printf '\n%s\n' "$TOML_MARKER" >> "$policy_dest"
+            print_success "${verb}ed $policy_dest"
+            policy_active=true
+        else
+            print_info "Skipped policy file"
         fi
+    elif has_marker "$TOML_MARKER" "$policy_dest" 2>/dev/null; then
+        # Policy file already installed and up-to-date
+        policy_active=true
     fi
 
-    # ── Prompt: read-only permissions ───────────────────────────
-    if [[ ${#missing_perms[@]} -gt 0 ]]; then
+    # ── Migrate deprecated tools.allowed ───────────────────────
+    # Only offer migration when the policy file is in place, otherwise
+    # removing tools.allowed leaves the user with no configured permissions.
+    if [[ " ${actions[*]} " == *" migrate_tools_allowed "* ]] && $policy_active; then
         echo ""
-        echo -e "  Recommended read-only developer permissions (${#missing_perms[@]} tools):"
+        echo -e "  ${YELLOW}Deprecated:${NC} tools.allowed in settings.json"
+        echo "  These permissions are now handled by the Policy Engine file above."
         echo ""
-
-        local builtin_cmds=() raw_cmds=()
-        for perm in "${missing_perms[@]}"; do
-            if [[ "$perm" == run_shell_command\(*\) ]]; then
-                local cmd="${perm#run_shell_command(}"
-                raw_cmds+=("${cmd%)}")
-            else
-                builtin_cmds+=("$perm")
-            fi
-        done
-
-        [[ ${#builtin_cmds[@]} -gt 0 ]] && echo -e "    ${BOLD}Built-in (${#builtin_cmds[@]}):${NC} ${builtin_cmds[*]}"
-        display_permission_summary "${raw_cmds[@]}"
-
-        echo ""
-        if prompt_yes_no "  Add recommended read-only permissions?"; then
-            local add_json
-            add_json=$(printf '%s\n' "${missing_perms[@]}" | jq -R . | jq -s .)
-            updated=$(echo "$updated" | jq --argjson add "$add_json" \
-                '.tools.allowed = ((.tools.allowed // []) + $add)')
-            changed=true
+        if prompt_yes_no "  Remove deprecated tools.allowed from settings.json?"; then
+            local updated
+            # Preserve MCP auto-approve entries (mcp__*); only strip non-MCP entries.
+            # Delete only .tools.allowed (not the entire .tools object) to keep
+            # any other user settings under .tools intact.
+            updated=$(jq '
+                .tools.allowed = [.tools.allowed[] | select(startswith("mcp__"))]
+                | if .tools.allowed == [] then del(.tools.allowed) else . end
+            ' "$settings_file")
+            echo "$updated" | jq . > "$settings_file"
+            print_success "Removed deprecated tools.allowed from settings.json"
+        else
+            print_info "Kept tools.allowed (Gemini will show a deprecation warning)"
         fi
-    fi
-
-    # ── Write result ────────────────────────────────────────────
-    if $changed; then
-        echo "$updated" | jq . > "$settings_file"
-        print_success "Gemini CLI settings updated"
-    else
-        print_info "Skipped Gemini CLI settings"
     fi
 }
 
@@ -1014,42 +998,132 @@ for tool in "${selected_tools[@]}"; do
             install_commands "Codex CLI Skills" \
                 ".codex/skills" "$HOME/.codex/skills" \
                 "skill" "$MD_MARKER" "\$" "get_skill_description"
-            install_commands "Codex CLI Prompts" \
-                ".codex/prompts" "$HOME/.codex/prompts" \
-                "file:md" "$MD_MARKER" "" "get_md_description"
             configure_codex_settings
             configure_mcp "codex" "Codex CLI" "codex"
             ;;
     esac
 done
 
-# ---- install review loop scripts (requires both claude and codex) ----------
+# ---- install shared prompts ------------------------------------------------
+
+# Shared prompts are agent-agnostic and consumed by the review loop scripts.
+# Installed to ~/.local/share/ai-coding-setup/prompts/ via symlinks.
+_prompts_dest="$HOME/.local/share/ai-coding-setup/prompts"
+_prompts_src_dir="$(cd "$(dirname "prompts/code-review.md")" && pwd)"
+
+if [[ -d "prompts" ]]; then
+    mkdir -p "$_prompts_dest"
+    for _prompt_file in prompts/*.md; do
+        [[ -f "$_prompt_file" ]] || continue
+        _name=$(basename "$_prompt_file")
+        _src="$_prompts_src_dir/$_name"
+        _dest="$_prompts_dest/$_name"
+        if [[ -L "$_dest" ]]; then
+            _target=$(readlink "$_dest" 2>/dev/null) || true
+            [[ "$_target" != "$_src" ]] && ln -sf "$_src" "$_dest"
+        elif [[ -f "$_dest" ]]; then
+            # Plain file — only replace if it carries our marker (previous
+            # copy-based install) or --force is set; otherwise preserve user edits.
+            if has_marker "$MD_MARKER" "$_dest" || $FORCE; then
+                if ln -sf "$_src" "$_dest" 2>/dev/null; then :; else
+                    cp "$_src" "$_dest"
+                    has_marker "$MD_MARKER" "$_dest" || printf '\n%s\n' "$MD_MARKER" >> "$_dest"
+                fi
+            else
+                print_warning "$_name exists (custom) — skipped (use --force to overwrite)"
+            fi
+        else
+            if ln -sf "$_src" "$_dest" 2>/dev/null; then :; else
+                cp "$_src" "$_dest"
+                printf '\n%s\n' "$MD_MARKER" >> "$_dest"
+            fi
+        fi
+    done
+fi
+
+# ---- install review loop scripts -------------------------------------------
 
 # Each review-loop script has its own prompt-file dependencies.  Only gate on
 # the prompts that the specific script validates at runtime so that one script
 # can be installed even when the other's prompts are not yet present.
+# Agent selection is configurable at runtime via ~/.ai-coding-setup.conf and
+# CLI flags, so we no longer require both claude and codex to be installed.
 review_loop_scripts=()
 
-if command -v claude &>/dev/null && command -v codex &>/dev/null; then
-    # code-review-loop needs Claude + Codex code-review prompts
-    if [[ -f "$HOME/.claude/commands/code-review.md" ]] \
-        && [[ -f "$HOME/.claude/commands/code-refinement.md" ]] \
-        && [[ -f "$HOME/.codex/prompts/code-review.md" ]] \
-        && [[ -f "$HOME/.codex/prompts/code-review-followup.md" ]]; then
-        review_loop_scripts+=("bin/code-review-loop")
-    fi
-    # plan-review-loop needs Claude + Codex plan-review prompts
-    if [[ -f "$HOME/.codex/prompts/plan-review.md" ]] \
-        && [[ -f "$HOME/.codex/prompts/plan-review-followup.md" ]]; then
-        review_loop_scripts+=("bin/plan-review-loop")
-    fi
+# code-review-loop needs editor + reviewer prompts
+if [[ -f "$_prompts_dest/code-review.md" ]] \
+    && [[ -f "$_prompts_dest/code-review-followup.md" ]] \
+    && [[ -f "$_prompts_dest/code-review-response.md" ]] \
+    && [[ -f "$_prompts_dest/code-refinement.md" ]]; then
+    review_loop_scripts+=("bin/code-review-loop")
+fi
+# plan-review-loop needs reviewer prompts
+if [[ -f "$_prompts_dest/plan-review.md" ]] \
+    && [[ -f "$_prompts_dest/plan-review-followup.md" ]]; then
+    review_loop_scripts+=("bin/plan-review-loop")
 fi
 
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
+    # Install the shared library to ~/.local/lib/ (not bin/ — it's sourced, not executed)
+    _lib_dest="$HOME/.local/lib"
+    _lib_src="$(cd "$(dirname "lib/lib-review-loop")" && pwd)/lib-review-loop"
+    mkdir -p "$_lib_dest"
+    if [[ -L "$_lib_dest/lib-review-loop" ]]; then
+        _target=$(readlink "$_lib_dest/lib-review-loop" 2>/dev/null) || true
+        [[ "$_target" != "$_lib_src" ]] && ln -sf "$_lib_src" "$_lib_dest/lib-review-loop"
+    elif [[ -f "$_lib_dest/lib-review-loop" ]]; then
+        if head -5 "$_lib_dest/lib-review-loop" | grep -qF "source: ai-coding-setup" 2>/dev/null; then
+            ln -sf "$_lib_src" "$_lib_dest/lib-review-loop" 2>/dev/null \
+                || cp "$_lib_src" "$_lib_dest/lib-review-loop"
+        fi
+    else
+        ln -sf "$_lib_src" "$_lib_dest/lib-review-loop" 2>/dev/null \
+            || cp "$_lib_src" "$_lib_dest/lib-review-loop"
+    fi
     install_scripts "bin" "${review_loop_scripts[@]}"
 elif [[ -d "bin" ]]; then
     echo ""
-    echo -e "  ${DIM}Review loop scripts require both Claude Code and Codex CLI prompts — skipped${NC}"
+    echo -e "  ${DIM}Review loop scripts require shared prompts — skipped${NC}"
+fi
+
+# ---- create default config file if missing ---------------------------------
+
+config_file="$HOME/.ai-coding-setup.conf"
+if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
+    # Pick defaults from installed tools.  Prefer claude for editing (strong at
+    # code changes) and codex/gemini for reviewing (second opinion), but fall
+    # back to the same agent for both roles if only one tool is available.
+    _default_editor="" _default_reviewer=""
+    for _t in claude codex gemini; do
+        [[ " ${selected_tools[*]} " == *" $_t "* ]] || continue
+        [[ -z "$_default_editor" ]] && _default_editor="$_t"
+        [[ -n "$_default_editor" ]] && [[ "$_t" != "$_default_editor" ]] && _default_reviewer="$_t"
+    done
+    : "${_default_reviewer:=$_default_editor}"
+
+    echo ""
+    echo -e "${BOLD}── Review Loop Config ──${NC}"
+    echo ""
+    echo "  Default agent configuration file: $config_file"
+    echo ""
+    echo "  This file sets default agents for review loops (overridable via CLI flags)."
+    echo "  Defaults based on selected tools: editor=$_default_editor, reviewer=$_default_reviewer"
+    echo ""
+    if prompt_yes_no "  Create config file with defaults?"; then
+        cat > "$config_file" <<CONF
+# ai-coding-setup — default agent configuration for review loops.
+# These defaults can be overridden per-invocation with --editor / --reviewer flags.
+
+# Agent for editing/implementation (claude, codex, gemini)
+EDITOR_AGENT=$_default_editor
+
+# Agent for reviewing (claude, codex, gemini)
+REVIEWER_AGENT=$_default_reviewer
+CONF
+        print_success "Created $config_file"
+    else
+        print_info "Skipped config file creation"
+    fi
 fi
 
 # ---- final summary ---------------------------------------------------------

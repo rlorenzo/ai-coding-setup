@@ -1,7 +1,3 @@
----
-description: 'Plan review follow-up'
----
-
 # Plan Review Follow-Up
 
 Review the updated plan file and the response in feedback-plan.md. The plan author has either made improvements or explained why certain feedback was declined.

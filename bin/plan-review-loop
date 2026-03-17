@@ -1,51 +1,57 @@
 #!/usr/bin/env bash
 # source: ai-coding-setup
 # ---------------------------------------------------------------------------
-# Automated plan review feedback loop using Codex and Claude.
+# Automated plan review feedback loop.
 #
 # Orchestrates an iterative plan improvement cycle:
-#   1. Codex reads plan file, writes structured feedback to feedback-plan.md
-#   2. Claude reads plan + feedback, improves plan, writes response
-#   3. Codex re-reviews, provides new feedback or signals NO_FURTHER_FEEDBACK
+#   1. Reviewer agent reads plan file, writes structured feedback to feedback-plan.md
+#   2. Editor agent reads plan + feedback, improves plan, writes response
+#   3. Reviewer re-reviews, provides new feedback or signals NO_FURTHER_FEEDBACK
 #   4. Repeat until satisfied or max iterations
 #   5. Claude writes a narrative summary to plan-review-summary.md
+#
+# Agent roles are configurable via ~/.ai-coding-setup.conf and CLI flags.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-# ---- colors (disabled when stdout is not a terminal) --------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-DIM='\033[2m'
-NC='\033[0m'
+# ---- load shared library --------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/lib-review-loop
+source "$SCRIPT_DIR/../lib/lib-review-loop"
 
-if [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' CYAN='' MAGENTA='' DIM='' NC=''
-fi
+# ---- defaults (hardcoded -> config file -> CLI flags) ---------------------
+EDITOR_AGENT="claude"
+REVIEWER_AGENT="codex"
+load_config
 
-# ---- defaults ------------------------------------------------------------
 MAX_ITERATIONS=5
 PLAN_FILE=""
+
+# Track whether CLI explicitly set agents (to preserve override over config)
+_CLI_EDITOR="" _CLI_REVIEWER=""
 
 # ---- usage ---------------------------------------------------------------
 usage() {
     cat <<'EOF'
 Usage: plan-review-loop [OPTIONS] <plan-file>
 
-Orchestrates a plan review feedback loop between Codex CLI and Claude Code.
+Orchestrates a plan review feedback loop between two AI agents.
 
 Arguments:
   plan-file                Path to the plan document to review
 
 Options:
   -m, --max-iterations N   Maximum review-improve cycles (default: 5)
+  -e, --editor AGENT       Agent for plan improvement (default: claude)
+  -r, --reviewer AGENT     Agent for plan review (default: codex)
   -h, --help               Show this help message
+
+Agents: claude, codex, gemini
 
 Examples:
   plan-review-loop PLAN-feature.md
   plan-review-loop -m 3 PLAN-feature.md
+  plan-review-loop --reviewer claude --editor codex PLAN-feature.md
 EOF
     exit 0
 }
@@ -54,11 +60,21 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -m|--max-iterations) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; MAX_ITERATIONS="$2"; shift 2 ;;
+        -e|--editor)   [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_EDITOR="$2"; shift 2 ;;
+        -r|--reviewer) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_REVIEWER="$2"; shift 2 ;;
         -h|--help) usage ;;
         -*) echo -e "${RED}Unknown option: $1${NC}"; usage ;;
         *)  PLAN_FILE="$1"; shift ;;
     esac
 done
+
+# CLI flags override config file
+[[ -n "$_CLI_EDITOR" ]]   && EDITOR_AGENT="$_CLI_EDITOR"
+[[ -n "$_CLI_REVIEWER" ]] && REVIEWER_AGENT="$_CLI_REVIEWER"
+
+validate_agent_name "$EDITOR_AGENT" "--editor"
+validate_agent_name "$REVIEWER_AGENT" "--reviewer"
+validate_positive_int "$MAX_ITERATIONS" "--max-iterations"
 
 if [[ -z "$PLAN_FILE" ]]; then
     echo -e "${RED}ERROR: Plan file argument is required${NC}"
@@ -75,43 +91,13 @@ else
     PLAN_FILE_PATH="$PROJECT_ROOT/$PLAN_FILE"
 fi
 
-CODEX_REVIEW_PROMPT="$HOME/.codex/prompts/plan-review.md"
-CODEX_FOLLOWUP_PROMPT="$HOME/.codex/prompts/plan-review-followup.md"
+REVIEWER_INITIAL_PROMPT="$PROMPTS_DIR/plan-review.md"
+REVIEWER_FOLLOWUP_PROMPT="$PROMPTS_DIR/plan-review-followup.md"
 
-CLAUDE_TOOLS="Read,Write,Edit,Grep,Glob"
+EDITOR_TOOLS="Read,Write,Edit,Grep,Glob"
+REVIEWER_TOOLS="Read,Write,Grep,Glob"
 
 # ---- helpers -------------------------------------------------------------
-write_step() {
-    local label="$1" message="$2"
-    echo ""
-    echo -e "${CYAN}[$label] $message${NC}"
-    printf '%0.s-' {1..60}
-    echo ""
-}
-
-write_status() {
-    local message="$1" color="${2:-${NC}}"
-    echo -e "  ${color}${message}${NC}"
-}
-
-read_prompt_file() {
-    local path="$1"
-    local content
-    content=$(<"$path")
-    # Strip YAML frontmatter if present (---\n...\n---)
-    if [[ "$content" == ---* ]]; then
-        content=$(printf '%s\n' "$content" | awk '
-            NR==1 && /^---/ { skip=1; next }
-            skip && /^---/ { skip=0; next }
-            !skip { print }')
-    fi
-    # Trim leading and trailing blank lines (preserve indentation within)
-    content=$(printf '%s\n' "$content" | awk '
-        { lines[NR]=$0 }
-        /[^[:space:]]/ { if (!first) first=NR; last=NR }
-        END { for (i=first; i<=last; i++) print lines[i] }')
-    printf '%s' "$content"
-}
 
 test_reviewer_satisfied() {
     [[ -f "$FEEDBACK_FILE" ]] || return 1
@@ -122,7 +108,7 @@ test_reviewer_satisfied() {
     [[ "$trimmed" == "NO_FURTHER_FEEDBACK" ]]
 }
 
-build_claude_improvement_prompt() {
+build_improvement_prompt() {
     local plan_path="$1" feedback_path="$2" reviewer_name="$3" cycle="$4" max_cycles="$5"
     cat <<PROMPT
 You are a senior software architect improving a plan document based on reviewer feedback.
@@ -171,192 +157,162 @@ if [[ ! -f "$PLAN_FILE_PATH" ]]; then
     exit 1
 fi
 
-validate_tools() {
-    local missing=()
-    command -v claude &>/dev/null || missing+=("claude")
-    command -v codex &>/dev/null || missing+=("codex")
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo -e "${RED}ERROR: Missing required tools: ${missing[*]}${NC}"
-        echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
-        echo "  Install Codex CLI:   https://github.com/openai/codex"
-        exit 1
-    fi
-}
-
-validate_prompts() {
-    local missing=()
-    [[ -f "$CODEX_REVIEW_PROMPT" ]] || missing+=("$CODEX_REVIEW_PROMPT")
-    [[ -f "$CODEX_FOLLOWUP_PROMPT" ]] || missing+=("$CODEX_FOLLOWUP_PROMPT")
-
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        echo -e "${RED}ERROR: Missing prompt files:${NC}"
-        local f
-        for f in "${missing[@]}"; do
-            echo "  $f"
-        done
-        echo ""
-        echo "Run the ai-coding-setup installer to install them:"
-        echo "  https://github.com/rlorenzo/ai-coding-setup"
-        exit 1
-    fi
-}
+validate_tools
+validate_prompts "$REVIEWER_INITIAL_PROMPT" "$REVIEWER_FOLLOWUP_PROMPT"
 
 # ---- temp directory with cleanup -----------------------------------------
-TMPDIR_REVIEW=""
-
-setup_temp() {
-    TMPDIR_REVIEW=$(mktemp -d "${TMPDIR:-/tmp}/plan-review-loop.XXXXXX")
-}
-
-cleanup() {
-    [[ -n "$TMPDIR_REVIEW" ]] && rm -rf "$TMPDIR_REVIEW"
-}
-trap cleanup EXIT
+setup_temp "plan-review-loop"
+trap cleanup_temp EXIT
 
 # ---- main ----------------------------------------------------------------
-validate_tools
-validate_prompts
-setup_temp
 
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
 echo -e "${MAGENTA} Plan Review Loop${NC}"
 echo -e "${MAGENTA}========================================${NC}"
-echo " Plan file     : $PLAN_FILE"
-echo " Max iterations: $MAX_ITERATIONS"
+echo " Plan file      : $PLAN_FILE"
+echo " Max iterations : $MAX_ITERATIONS"
+echo " Editor          : $EDITOR_AGENT"
+echo " Reviewer        : $REVIEWER_AGENT"
 
 start_time=$(date +%s)
 iteration_data=""
-codex_iterations=0
-codex_satisfied=false
+reviewer_iterations=0
+reviewer_satisfied=false
 
 # Snapshot the original plan for the summary diff
 cp "$PLAN_FILE_PATH" "$TMPDIR_REVIEW/plan-initial.md"
 
 # =========================================================================
-# Codex Review
+# Review Loop
 # =========================================================================
 echo ""
 echo -e "${YELLOW}----------------------------------------${NC}"
-echo -e "${YELLOW} Codex Review${NC}"
+echo -e "${YELLOW} $REVIEWER_AGENT Review${NC}"
 echo -e "${YELLOW}----------------------------------------${NC}"
 
-# ---- Initial Codex review ------------------------------------------------
-write_step "1" "Codex: Initial Plan Review"
+# ---- Initial review ------------------------------------------------------
+write_step "1" "$REVIEWER_AGENT: Initial Plan Review"
 rm -f "$FEEDBACK_FILE" 2>/dev/null || true
 write_status "This may take several minutes..." "$DIM"
 
-codex_prompt=$(read_prompt_file "$CODEX_REVIEW_PROMPT")
-codex_task="Execute the following plan review task now. Do not introduce yourself. Begin immediately.
-IMPORTANT: You MUST write your review to the file feedback-plan.md in the project root. Do NOT create any other files.
-The plan file to review is: $PLAN_FILE
+reviewer_prompt=$(read_prompt_file "$REVIEWER_INITIAL_PROMPT")
+review_task="$reviewer_prompt
 
-$codex_prompt"
+IMPORTANT: You MUST write your review to the file feedback-plan.md in the project root. Do NOT create any other files.
+The plan file to review is: $PLAN_FILE"
+
+pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
+snapshot_untracked > "$pre_snapshot"
 
 local_exit=0
-echo "$codex_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
+run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
+cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
 if [[ $local_exit -ne 0 ]]; then
-    write_status "Codex plan review exited with code $local_exit" "$YELLOW"
+    write_status "$REVIEWER_AGENT plan review exited with code $local_exit" "$YELLOW"
 fi
 
 if [[ ! -f "$FEEDBACK_FILE" ]]; then
-    write_status "No feedback file created — Codex may have failed" "$RED"
+    write_status "No feedback file created — $REVIEWER_AGENT may have failed" "$RED"
     echo ""
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${MAGENTA} Plan Review Loop Complete${NC}"
     echo -e "${MAGENTA}========================================${NC}"
     echo " Status   : ERROR (feedback file not generated)"
     echo ""
-    echo -e "${RED}Codex did not produce feedback-plan.md. Plan is NOT reviewed.${NC}"
+    echo -e "${RED}$REVIEWER_AGENT did not produce feedback-plan.md. Plan is NOT reviewed.${NC}"
     exit 1
 fi
 
 feedback_content=$(<"$FEEDBACK_FILE")
-iteration_data+=$'\n### Codex Initial Review\n\n'
+iteration_data+=$'\n### Initial Review\n\n'
 iteration_data+="$feedback_content"$'\n'
 
-# ---- Codex feedback loop -------------------------------------------------
-while [[ $codex_iterations -lt $MAX_ITERATIONS ]]; do
+# ---- Feedback loop -------------------------------------------------------
+while [[ $reviewer_iterations -lt $MAX_ITERATIONS ]]; do
     if test_reviewer_satisfied; then
-        write_status "Codex is satisfied — no further feedback!" "$GREEN"
-        codex_satisfied=true
+        write_status "$REVIEWER_AGENT is satisfied — no further feedback!" "$GREEN"
+        reviewer_satisfied=true
         break
     fi
 
-    codex_iterations=$((codex_iterations + 1))
+    reviewer_iterations=$((reviewer_iterations + 1))
     echo ""
-    echo -e "${YELLOW}=== Codex Review Cycle $codex_iterations of $MAX_ITERATIONS ===${NC}"
+    echo -e "${YELLOW}=== Review Cycle $reviewer_iterations of $MAX_ITERATIONS ===${NC}"
 
-    # Claude improves the plan
-    write_step "2.$codex_iterations" "Claude: Improving Plan (Codex feedback)"
+    # Editor improves the plan
+    write_step "2.$reviewer_iterations" "$EDITOR_AGENT: Improving Plan ($REVIEWER_AGENT feedback)"
     write_status "This may take several minutes..." "$DIM"
 
-    claude_prompt=$(build_claude_improvement_prompt \
-        "$PLAN_FILE_PATH" "$FEEDBACK_FILE" "Codex" "$codex_iterations" "$MAX_ITERATIONS")
+    editor_prompt=$(build_improvement_prompt \
+        "$PLAN_FILE_PATH" "$FEEDBACK_FILE" "$REVIEWER_AGENT" "$reviewer_iterations" "$MAX_ITERATIONS")
+
+    pre_snapshot="$TMPDIR_REVIEW/pre-editor-cycle-$reviewer_iterations.txt"
+    snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    claude -p "$claude_prompt" --allowedTools "$CLAUDE_TOOLS" || local_exit=$?
+    run_agent "$EDITOR_AGENT" "$editor_prompt" "$EDITOR_TOOLS" || local_exit=$?
+    cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "Claude plan improvement exited with code $local_exit" "$YELLOW"
+        write_status "$EDITOR_AGENT plan improvement exited with code $local_exit" "$YELLOW"
     fi
 
-    # Capture Claude's response
-    claude_response=""
+    # Capture editor's response
+    editor_response=""
     if [[ -f "$FEEDBACK_FILE" ]]; then
-        claude_response=$(<"$FEEDBACK_FILE")
+        editor_response=$(<"$FEEDBACK_FILE")
     fi
-    iteration_data+=$'\n### Codex Cycle '"$codex_iterations"$' - Claude Response\n\n'
+    iteration_data+=$'\n### Cycle '"$reviewer_iterations"$' - Editor Response\n\n'
     # Truncate very long feedback to keep the summary prompt reasonable
-    if [[ ${#claude_response} -gt 3000 ]]; then
-        iteration_data+="${claude_response:0:3000}"$'\n\n... (truncated)\n'
+    if [[ ${#editor_response} -gt 3000 ]]; then
+        iteration_data+="${editor_response:0:3000}"$'\n\n... (truncated)\n'
     else
-        iteration_data+="$claude_response"$'\n'
+        iteration_data+="$editor_response"$'\n'
     fi
 
-    # Codex follow-up review
-    write_step "3.$codex_iterations" "Codex: Follow-up Review"
+    # Reviewer follow-up review
+    write_step "3.$reviewer_iterations" "$REVIEWER_AGENT: Follow-up Review"
     write_status "This may take several minutes..." "$DIM"
 
-    followup_prompt=$(read_prompt_file "$CODEX_FOLLOWUP_PROMPT")
-    followup_task="Execute the following plan review follow-up task now. Do not introduce yourself. Begin immediately.
-The plan file is: $PLAN_FILE
-IMPORTANT: Write ALL output (feedback or NO_FURTHER_FEEDBACK) to the file feedback-plan.md. Do NOT create any other files.
+    followup_prompt=$(read_prompt_file "$REVIEWER_FOLLOWUP_PROMPT")
+    followup_task="$followup_prompt
 
-$followup_prompt"
+The plan file is: $PLAN_FILE
+IMPORTANT: Write ALL output (feedback or NO_FURTHER_FEEDBACK) to the file feedback-plan.md. Do NOT create any other files."
+
+    pre_snapshot="$TMPDIR_REVIEW/pre-review-cycle-$reviewer_iterations.txt"
+    snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    echo "$followup_task" | codex exec --full-auto -c 'mcp_servers={}' - || local_exit=$?
+    run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
+    cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "Codex follow-up failed (exit $local_exit) — aborting review loop" "$YELLOW"
+        write_status "$REVIEWER_AGENT follow-up failed (exit $local_exit) — aborting review loop" "$YELLOW"
         break
     fi
 
-    # Capture Codex follow-up feedback
-    codex_followup=""
+    # Capture reviewer follow-up feedback
+    reviewer_followup=""
     if [[ -f "$FEEDBACK_FILE" ]]; then
-        codex_followup=$(<"$FEEDBACK_FILE")
+        reviewer_followup=$(<"$FEEDBACK_FILE")
     fi
-    iteration_data+=$'\n### Codex Cycle '"$codex_iterations"$' - Codex Follow-up\n\n'
-    if [[ ${#codex_followup} -gt 3000 ]]; then
-        iteration_data+="${codex_followup:0:3000}"$'\n\n... (truncated)\n'
+    iteration_data+=$'\n### Cycle '"$reviewer_iterations"$' - Reviewer Follow-up\n\n'
+    if [[ ${#reviewer_followup} -gt 3000 ]]; then
+        iteration_data+="${reviewer_followup:0:3000}"$'\n\n... (truncated)\n'
     else
-        iteration_data+="$codex_followup"$'\n'
+        iteration_data+="$reviewer_followup"$'\n'
     fi
 done
 
-if [[ "$codex_satisfied" == false ]] && [[ $codex_iterations -ge $MAX_ITERATIONS ]]; then
-    write_status "Codex: Max iterations ($MAX_ITERATIONS) reached" "$YELLOW"
+if [[ "$reviewer_satisfied" == false ]] && [[ $reviewer_iterations -ge $MAX_ITERATIONS ]]; then
+    write_status "$REVIEWER_AGENT: Max iterations ($MAX_ITERATIONS) reached" "$YELLOW"
 fi
 
 # ---- Build improvement history for the summary --------------------------
-end_time=$(date +%s)
-elapsed_secs=$((end_time - start_time))
-elapsed_min=$((elapsed_secs / 60))
-elapsed_remainder=$((elapsed_secs % 60))
-elapsed_display="${elapsed_min}m ${elapsed_remainder}s"
+elapsed_display=$(format_elapsed "$start_time")
 
 # Read final feedback file
 final_feedback=""
@@ -369,20 +325,21 @@ plan_diff=$(git diff --no-index -- "$TMPDIR_REVIEW/plan-initial.md" "$PLAN_FILE_
 
 write_status "Plan diff saved for summary agent" "$DIM"
 
-# ---- Claude writes the improvement summary --------------------------------
-write_step "Final" "Claude: Writing plan improvement summary"
+# ---- Editor writes the improvement summary --------------------------------
+write_step "Final" "$EDITOR_AGENT: Writing plan improvement summary"
 
-if $codex_satisfied; then
-    codex_status_label="satisfied"
+if $reviewer_satisfied; then
+    reviewer_status_label="satisfied"
 else
-    codex_status_label="max iterations reached"
+    reviewer_status_label="max iterations reached"
 fi
 
 summary_prompt="Write a narrative summary of plan improvements to the file plan-review-summary.md in the project root.
 
 This was an automated plan review loop that ran in $elapsed_display.
 Plan file: $PLAN_FILE
-Reviewer: Codex ($codex_iterations cycle(s), $codex_status_label)
+Reviewer: $REVIEWER_AGENT ($reviewer_iterations cycle(s), $reviewer_status_label)
+Editor: $EDITOR_AGENT
 
 ## Plan Diff (before vs after review loop)
 
@@ -409,17 +366,17 @@ Write plan-review-summary.md with this structure:
 2. **Key Improvements** - Narrative bullets describing the most significant improvements made to the plan. Focus on WHAT changed and WHY (e.g., \"Added rollback strategy for database migration\" not \"Edited Sprint R3 section\"). Group related improvements together.
 3. **Declined Feedback** - Brief summary of feedback that was considered but declined, and the reasoning. Only include if there were notable declinations.
 4. **Remaining Gaps** (if any) - Anything the reviewers flagged that was not fully resolved.
-5. **Review Metrics** - Cycles, whether Codex was satisfied, total duration.
+5. **Review Metrics** - Cycles, whether $REVIEWER_AGENT was satisfied, total duration.
 
 Be concise and focus on the substance of improvements, not process details.
 Do not create any other files. Do not stage or commit anything."
 
 local_exit=0
-claude -p "$summary_prompt" --allowedTools "Read,Write,Grep,Glob" || local_exit=$?
+run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
 
 # ---- Cleanup intermediate files -----------------------------------------
 # Only remove feedback file when it contains no valid content (NO_FURTHER_FEEDBACK)
-if $codex_satisfied; then
+if $reviewer_satisfied; then
     rm -f "$FEEDBACK_FILE"
 fi
 
@@ -430,16 +387,17 @@ echo -e "${MAGENTA} Plan Review Loop Complete${NC}"
 echo -e "${MAGENTA}========================================${NC}"
 echo ""
 
-if $codex_satisfied; then
-    echo -e " Codex   : ${GREEN}SATISFIED (NO_FURTHER_FEEDBACK)  [$codex_iterations iteration(s)]${NC}"
+if $reviewer_satisfied; then
+    echo -e " Reviewer : ${GREEN}$REVIEWER_AGENT — SATISFIED (NO_FURTHER_FEEDBACK)  [$reviewer_iterations iteration(s)]${NC}"
 else
-    echo -e " Codex   : ${YELLOW}MAX ITERATIONS ($MAX_ITERATIONS)  [$codex_iterations iteration(s)]${NC}"
+    echo -e " Reviewer : ${YELLOW}$REVIEWER_AGENT — MAX ITERATIONS ($MAX_ITERATIONS)  [$reviewer_iterations iteration(s)]${NC}"
 fi
 
 echo ""
-echo " Duration: $elapsed_display"
-echo -e " Plan    : $PLAN_FILE"
-[[ -f "$FEEDBACK_FILE" ]] && echo -e " Feedback: feedback-plan.md"
-echo -e " Summary : plan-review-summary.md"
+echo " Duration : $elapsed_display"
+echo " Editor   : $EDITOR_AGENT"
+echo -e " Plan     : $PLAN_FILE"
+[[ -f "$FEEDBACK_FILE" ]] && echo -e " Feedback : feedback-plan.md"
+echo -e " Summary  : plan-review-summary.md"
 echo ""
 echo -e "${CYAN}Review the improved plan and summary.${NC}"
