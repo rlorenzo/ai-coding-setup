@@ -119,7 +119,8 @@ has_marker() {
 is_up_to_date() {
     local src="$1" dest="$2" marker="$3"
     local expected
-    expected=$(cat "$src"; printf '\n%s\n' "$marker")
+    expected=$(cat "$src")
+    has_marker "$marker" "$src" || expected=$(printf '%s\n%s\n' "$expected" "$marker")
     [[ "$expected" == "$(cat "$dest")" ]]
 }
 
