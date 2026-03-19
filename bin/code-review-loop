@@ -122,15 +122,18 @@ stage_review_changes() {
         done <<< "$current_staged"
     fi
 
-    # Stage any unstaged tracked modifications — the dirty-worktree guard at
-    # startup guarantees these were created by the review agent, not pre-existing
+    # Stage unstaged tracked modifications that were NOT present before the loop
+    # started — those are changes made by the review agents.  Pre-existing
+    # unstaged changes (captured in BASELINE_UNSTAGED) are left untouched.
     local unstaged_modified
-    unstaged_modified=$(git diff --name-only 2>/dev/null) || true
+    unstaged_modified=$(git diff --name-only 2>/dev/null | sort) || true
     if [[ -n "$unstaged_modified" ]]; then
+        local agent_modified
+        agent_modified=$(comm -23 <(echo "$unstaged_modified") "$BASELINE_UNSTAGED") || true
         while IFS= read -r file; do
             [[ -z "$file" ]] && continue
             git add -- "$file"
-        done <<< "$unstaged_modified"
+        done <<< "$agent_modified"
     fi
 
     # Stage newly created untracked files — these are legitimate fixes from
@@ -165,10 +168,6 @@ _required_prompts+=("$EDITOR_RESPONSE_PROMPT" "$REVIEWER_INITIAL_PROMPT" "$REVIE
 validate_tools
 validate_prompts "${_required_prompts[@]}"
 
-# ---- temp directory with cleanup -----------------------------------------
-setup_temp "code-review-loop"
-trap cleanup_temp EXIT
-
 # ---- main ----------------------------------------------------------------
 
 # Detect partially staged files (some hunks staged, others not) — these would
@@ -188,7 +187,9 @@ if [[ -n "$partially_staged" ]]; then
     exit 1
 fi
 
-setup_temp
+# ---- temp directory with cleanup -----------------------------------------
+setup_temp "code-review-loop"
+trap cleanup_temp EXIT
 
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
@@ -206,19 +207,10 @@ initial_diff=$(git diff --staged --stat 2>&1) || true
 initial_diff_full=$(git diff --staged 2>&1) || true
 initial_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
 
-# Tracked unstaged edits make it impossible to safely separate pre-existing
-# work from review-loop fixes in the same file, so reject them up front.
-tracked_unstaged=$(git diff --name-only 2>/dev/null | sort) || true
-if [[ -n "$tracked_unstaged" ]]; then
-    echo -e "${RED}ERROR: Unstaged tracked changes detected:${NC}"
-    while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        echo "  $f"
-    done <<< "$tracked_unstaged"
-    echo ""
-    echo "Commit, stash, or fully stage these files before running the review loop."
-    exit 1
-fi
+# Baseline unstaged tracked files — only changes to files NOT in this list
+# should be staged during the loop (they come from the review agents).
+BASELINE_UNSTAGED="$TMPDIR_REVIEW/baseline-unstaged.txt"
+git diff --name-only 2>/dev/null | sort > "$BASELINE_UNSTAGED"
 
 # Baseline untracked files — only files created *during* the loop should be staged
 BASELINE_UNTRACKED="$TMPDIR_REVIEW/baseline-untracked.txt"
