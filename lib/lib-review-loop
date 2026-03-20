@@ -143,7 +143,7 @@ run_claude() {
     local prompt="$1"
     local tools="${2:-Edit,Read,Write,Bash,Grep,Glob}"
     claude -p "$prompt" --allowedTools "$tools" \
-        --strict-mcp-config --mcp-config '{}'
+        --strict-mcp-config --mcp-config '{"mcpServers":{}}'
 }
 
 # Run Codex CLI with a prompt.  Wraps the prompt with a preamble that prevents
