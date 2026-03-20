@@ -4,7 +4,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # ai-coding-setup installer
 # Installs AI coding agent commands/skills for Claude Code, Gemini CLI,
-# and Codex CLI from this repo into user-level directories.
+# Codex CLI, and Copilot CLI from this repo into user-level directories.
 # ---------------------------------------------------------------------------
 
 RED='\033[0;31m'
@@ -181,6 +181,10 @@ is_mcp_configured() {
             [[ -f "$HOME/.codex/config.toml" ]] \
                 && grep -qF "[mcp_servers.${name}]" "$HOME/.codex/config.toml" 2>/dev/null
             ;;
+        copilot)
+            [[ -f "$HOME/.copilot/mcp-config.json" ]] \
+                && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.copilot/mcp-config.json" &>/dev/null
+            ;;
     esac
 }
 
@@ -196,9 +200,18 @@ add_mcp_server() {
         set -- "/c" "$@"
     fi
     case "$tool" in
-        claude) claude mcp add --scope user "$name" -- "$cmd" "$@" 2>/dev/null ;;
-        gemini) gemini mcp add --scope user "$name" "$cmd" "$@" 2>/dev/null ;;
-        codex)  codex mcp add "$name" -- "$cmd" "$@" 2>/dev/null ;;
+        claude)  claude mcp add --scope user "$name" -- "$cmd" "$@" 2>/dev/null ;;
+        gemini)  gemini mcp add --scope user "$name" "$cmd" "$@" 2>/dev/null ;;
+        codex)   codex mcp add "$name" -- "$cmd" "$@" 2>/dev/null ;;
+        copilot)
+            local config="$HOME/.copilot/mcp-config.json"
+            [[ -f "$config" ]] || echo '{"mcpServers":{}}' > "$config"
+            local args_json updated
+            args_json=$(printf '%s\n' "$@" | jq -R . | jq -s .)
+            updated=$(jq --arg n "$name" --arg c "$cmd" --argjson a "$args_json" \
+                '.mcpServers[$n] = {"type":"local","command":$c,"args":$a}' "$config")
+            echo "$updated" | jq . > "$config"
+            ;;
     esac
 }
 
@@ -743,6 +756,27 @@ multi_agent = true' "$config_file"
     fi
 }
 
+# ---- Copilot CLI settings configuration -------------------------------------
+
+configure_copilot_settings() {
+    local config_file="$HOME/.copilot/config.json"
+
+    echo ""
+    echo -e "${BOLD}── Copilot CLI Settings ──${NC}"
+
+    mkdir -p "$HOME/.copilot"
+    if [[ ! -f "$config_file" ]]; then
+        echo '{}' > "$config_file"
+    fi
+
+    if ! jq empty "$config_file" 2>/dev/null; then
+        print_warning "$HOME/.copilot/config.json is not valid JSON — skipping"
+        return
+    fi
+
+    echo -e "  ${DIM}No settings to configure${NC}"
+}
+
 # ---- review loop script installer -----------------------------------------
 #
 # Symlinks executable scripts from bin/ to ~/.local/bin/ so they are on PATH.
@@ -885,8 +919,8 @@ done
 
 # ---- prerequisite checks --------------------------------------------------
 
-if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]]; then
-    print_error "No command directories found (.claude/commands, .gemini/commands, .codex/skills)."
+if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]] && [[ ! -d ".copilot/skills" ]]; then
+    print_error "No command directories found (.claude/commands, .gemini/commands, .codex/skills, .copilot/skills)."
     print_error "Please run this script from the ai-coding-setup repository root."
     exit 1
 fi
@@ -930,6 +964,10 @@ if command -v codex &>/dev/null || [[ -d "$HOME/.codex" ]]; then
     detected_tools+=("codex")
 fi
 
+if command -v copilot &>/dev/null || [[ -d "$HOME/.copilot" ]]; then
+    detected_tools+=("copilot")
+fi
+
 if [[ ${#detected_tools[@]} -eq 0 ]]; then
     print_error "No supported AI coding tools detected."
     echo ""
@@ -937,6 +975,7 @@ if [[ ${#detected_tools[@]} -eq 0 ]]; then
     echo "  - Claude Code:  https://docs.anthropic.com/en/docs/claude-code"
     echo "  - Gemini CLI:   https://github.com/google-gemini/gemini-cli"
     echo "  - Codex CLI:    https://github.com/openai/codex"
+    echo "  - Copilot CLI:  https://docs.github.com/en/copilot/copilot-cli"
     echo ""
     exit 1
 fi
@@ -950,9 +989,10 @@ echo ""
 for i in "${!detected_tools[@]}"; do
     tool="${detected_tools[$i]}"
     case "$tool" in
-        claude) echo -e "  ${BOLD}$((i + 1)))${NC} Claude Code" ;;
-        gemini) echo -e "  ${BOLD}$((i + 1)))${NC} Gemini CLI" ;;
-        codex)  echo -e "  ${BOLD}$((i + 1)))${NC} Codex CLI" ;;
+        claude)  echo -e "  ${BOLD}$((i + 1)))${NC} Claude Code" ;;
+        gemini)  echo -e "  ${BOLD}$((i + 1)))${NC} Gemini CLI" ;;
+        codex)   echo -e "  ${BOLD}$((i + 1)))${NC} Codex CLI" ;;
+        copilot) echo -e "  ${BOLD}$((i + 1)))${NC} Copilot CLI" ;;
     esac
 done
 
@@ -1001,6 +1041,13 @@ for tool in "${selected_tools[@]}"; do
                 "skill" "$MD_MARKER" "\$" "get_skill_description"
             configure_codex_settings
             configure_mcp "codex" "Codex CLI" "codex"
+            ;;
+        copilot)
+            install_commands "Copilot CLI Skills" \
+                ".copilot/skills" "$HOME/.copilot/skills" \
+                "skill" "$MD_MARKER" "/" "get_skill_description"
+            configure_copilot_settings
+            configure_mcp "copilot" "Copilot CLI" "copilot"
             ;;
     esac
 done
@@ -1095,7 +1142,7 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
     # code changes) and codex/gemini for reviewing (second opinion), but fall
     # back to the same agent for both roles if only one tool is available.
     _default_editor="" _default_reviewer=""
-    for _t in claude codex gemini; do
+    for _t in claude codex gemini copilot; do
         [[ " ${selected_tools[*]} " == *" $_t "* ]] || continue
         [[ -z "$_default_editor" ]] && _default_editor="$_t"
         [[ -n "$_default_editor" ]] && [[ "$_t" != "$_default_editor" ]] && _default_reviewer="$_t"
@@ -1115,10 +1162,10 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
 # ai-coding-setup — default agent configuration for review loops.
 # These defaults can be overridden per-invocation with --editor / --reviewer flags.
 
-# Agent for editing/implementation (claude, codex, gemini)
+# Agent for editing/implementation (claude, codex, gemini, copilot)
 EDITOR_AGENT=$_default_editor
 
-# Agent for reviewing (claude, codex, gemini)
+# Agent for reviewing (claude, codex, gemini, copilot)
 REVIEWER_AGENT=$_default_reviewer
 CONF
         print_success "Created $config_file"
@@ -1136,9 +1183,10 @@ echo "Use your commands in:"
 
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
-        claude) echo -e "  Claude Code — type ${BOLD}/command-name${NC} in the prompt" ;;
-        gemini) echo -e "  Gemini CLI  — type ${BOLD}/command-name${NC} in the prompt" ;;
-        codex)  echo -e "  Codex CLI   — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
+        claude)  echo -e "  Claude Code  — type ${BOLD}/command-name${NC} in the prompt" ;;
+        gemini)  echo -e "  Gemini CLI   — type ${BOLD}/command-name${NC} in the prompt" ;;
+        codex)   echo -e "  Codex CLI    — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
+        copilot) echo -e "  Copilot CLI  — type ${BOLD}/skill-name${NC} in the prompt" ;;
     esac
 done
 

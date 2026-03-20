@@ -10,6 +10,7 @@ Set of prompts, skills, and scripts to aid in utilizing AI coding agents in deve
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
   - [Codex CLI](https://github.com/openai/codex)
+  - [Copilot CLI](https://docs.github.com/en/copilot/copilot-cli)
 
 ## Quick Start
 
@@ -30,6 +31,7 @@ The script detects which AI tools you have installed and walks you through insta
 | Claude Code | Markdown (`.md`) | `.claude/commands/` | `~/.claude/commands/` |
 | Gemini CLI | TOML (`.toml`) | `.gemini/commands/` | `~/.gemini/commands/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
+| Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Shared prompts | Markdown (`.md`) | `prompts/` | `~/.local/share/ai-coding-setup/prompts/` |
 
 ## Available Commands
@@ -43,6 +45,7 @@ Propose a conventional commit message for the currently staged changes. Detects 
 - Claude Code: `/commitmsg`
 - Gemini CLI: `/commitmsg`
 - Codex CLI: `$commitmsg`
+- Copilot CLI: `/commitmsg`
 
 ### /review-pr
 
@@ -53,6 +56,7 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 - Claude Code: `/review-pr [PR_NUMBER]`
 - Gemini CLI: `/review-pr [PR_NUMBER]`
 - Codex CLI: `$review-pr [PR_NUMBER]`
+- Copilot CLI: `/review-pr [PR_NUMBER]`
 
 ### /code-refinement
 
@@ -63,6 +67,7 @@ Review staged files for code quality (KISS, DRY, YAGNI, Clean Code), fix linting
 - Claude Code: `/code-refinement`
 - Gemini CLI: `/code-refinement`
 - Codex CLI: `$code-refinement`
+- Copilot CLI: `/code-refinement`
 
 ### /code-review
 
@@ -73,6 +78,7 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 - Claude Code: `/code-review`
 - Gemini CLI: `/code-review`
 - Codex CLI: `$code-review`
+- Copilot CLI: `/code-review`
 
 ## Shared Prompts
 
@@ -111,6 +117,7 @@ To add a command, create the appropriate file(s) for each tool you want to suppo
 1. **Claude Code** — create `.claude/commands/command-name.md` (markdown with `$ARGUMENTS` placeholder)
 2. **Gemini CLI** — create `.gemini/commands/command-name.toml` (TOML with `description` and `prompt` fields, `{{args}}` placeholder)
 3. **Codex CLI** — create `.codex/skills/command-name/SKILL.md` (markdown with YAML front matter containing `name` and `description`)
+4. **Copilot CLI** — create `.copilot/skills/command-name/SKILL.md` (same format as Codex skills)
 
 Run `./setup` again to install.
 
@@ -121,6 +128,7 @@ Delete the command/skill from the corresponding directory:
 - Claude: `~/.claude/commands/`
 - Gemini: `~/.gemini/commands/`
 - Codex: `~/.codex/skills/`
+- Copilot: `~/.copilot/skills/`
 
 The setup script only manages commands it originally installed.
 

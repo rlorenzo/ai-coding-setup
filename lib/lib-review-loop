@@ -38,7 +38,7 @@ fi
 PROMPTS_DIR="${AI_CODING_SETUP_PROMPTS_DIR:-$HOME/.local/share/ai-coding-setup/prompts}"
 
 # Valid agent names for --editor / --reviewer flags
-VALID_AGENTS="claude codex gemini"
+VALID_AGENTS="claude codex gemini copilot"
 
 # Filenames that review loops create — never treat as agent artifacts
 KNOWN_REVIEW_FILES="agent-code-review.md agent-review-summary.md feedback-plan.md plan-review-summary.md"
@@ -136,12 +136,14 @@ validate_positive_int() {
 # ---- agent execution ------------------------------------------------------
 
 # Run Claude Code with a prompt and optional tool restrictions.
+# Disables all MCP servers to keep autonomous runs scoped to local work.
 #   $1 — prompt text
 #   $2 — comma-separated allowed tools (default: Edit,Read,Write,Bash,Grep,Glob)
 run_claude() {
     local prompt="$1"
     local tools="${2:-Edit,Read,Write,Bash,Grep,Glob}"
-    claude -p "$prompt" --allowedTools "$tools"
+    claude -p "$prompt" --allowedTools "$tools" \
+        --strict-mcp-config --mcp-config '{}'
 }
 
 # Run Codex CLI with a prompt.  Wraps the prompt with a preamble that prevents
@@ -152,7 +154,7 @@ run_codex() {
     local wrapped="Execute the following task now. Do not introduce yourself. Begin immediately.
 
 $prompt"
-    echo "$wrapped" | codex exec --full-auto -c 'mcp_servers={}' -
+    echo "$wrapped" | codex exec --full-auto --config 'mcp_servers={}' -
 }
 
 # Run Gemini CLI with a prompt in non-interactive headless mode.
@@ -166,17 +168,34 @@ run_gemini() {
         2> >(grep -v -E 'Warning:.*deprecated|YOLO mode|Session cleanup disabled|Loaded cached credentials' >&2)
 }
 
+# Run Copilot CLI with a prompt in non-interactive autonomous mode.
+# Uses --autopilot for multi-step execution and --yolo for auto-approval.
+# Disables MCP servers to keep autonomous runs scoped to local review work.
+#   $1 — prompt text
+run_copilot() {
+    local prompt="$1"
+    local -a mcp_flags=(--disable-builtin-mcps)
+    local config="$HOME/.copilot/mcp-config.json"
+    if [[ -f "$config" ]]; then
+        while IFS= read -r name; do
+            mcp_flags+=(--disable-mcp-server "$name")
+        done < <(jq -r '.mcpServers // {} | keys[]' "$config" 2>/dev/null)
+    fi
+    copilot -p "$prompt" --autopilot --yolo "${mcp_flags[@]}"
+}
+
 # Dispatch to the appropriate agent runner.
-#   $1 — agent name ("claude", "codex", or "gemini")
+#   $1 — agent name ("claude", "codex", "gemini", or "copilot")
 #   $2 — prompt text
 #   $3 — allowed tools (only used by Claude; ignored by others)
 run_agent() {
     local agent="$1" prompt="$2" tools="${3:-}"
     case "$agent" in
-        claude) run_claude "$prompt" "$tools" ;;
-        codex)  run_codex "$prompt" ;;
-        gemini) run_gemini "$prompt" ;;
-        *)      echo -e "${RED}ERROR: Unknown agent: $agent${NC}"; return 1 ;;
+        claude)  run_claude "$prompt" "$tools" ;;
+        codex)   run_codex "$prompt" ;;
+        gemini)  run_gemini "$prompt" ;;
+        copilot) run_copilot "$prompt" ;;
+        *)       echo -e "${RED}ERROR: Unknown agent: $agent${NC}"; return 1 ;;
     esac
 }
 
@@ -192,9 +211,10 @@ validate_tools() {
     fi
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo -e "${RED}ERROR: Missing required tools: ${missing[*]}${NC}"
-        echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code"
-        echo "  Install Codex CLI:   https://github.com/openai/codex"
-        echo "  Install Gemini CLI:  https://github.com/google-gemini/gemini-cli"
+        echo "  Install Claude Code:  https://docs.anthropic.com/en/docs/claude-code"
+        echo "  Install Codex CLI:    https://github.com/openai/codex"
+        echo "  Install Gemini CLI:   https://github.com/google-gemini/gemini-cli"
+        echo "  Install Copilot CLI:  https://docs.github.com/en/copilot/copilot-cli"
         exit 1
     fi
 }
