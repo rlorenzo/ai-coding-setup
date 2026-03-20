@@ -952,19 +952,19 @@ fi
 
 detected_tools=()
 
-if [[ -d "$HOME/.claude" ]]; then
+if command -v claude &>/dev/null; then
     detected_tools+=("claude")
 fi
 
-if command -v gemini &>/dev/null || [[ -d "$HOME/.gemini" ]]; then
+if command -v gemini &>/dev/null; then
     detected_tools+=("gemini")
 fi
 
-if command -v codex &>/dev/null || [[ -d "$HOME/.codex" ]]; then
+if command -v codex &>/dev/null; then
     detected_tools+=("codex")
 fi
 
-if command -v copilot &>/dev/null || [[ -d "$HOME/.copilot" ]]; then
+if command -v copilot &>/dev/null; then
     detected_tools+=("copilot")
 fi
 
