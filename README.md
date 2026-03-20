@@ -134,6 +134,37 @@ The setup script only manages commands it originally installed.
 
 ## Contributing
 
+### Running Tests
+
+The test suite uses [BATS](https://github.com/bats-core/bats-core) (Bash Automated Testing System). After cloning with submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/rlorenzo/ai-coding-setup.git
+cd ai-coding-setup
+test/run
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+test/run
+```
+
+Unit tests (`test/run`) cover config parsing, prompt loading, validation, and review status checks. They run in seconds and need no API keys.
+
+### Smoke Tests
+
+Smoke tests run real AI agents against a temporary git repo to verify that CLI flags are accepted and agents can perform basic read/write tasks:
+
+```bash
+test/smoke                   # test all installed agents
+test/smoke claude codex      # test specific agents
+test/smoke --timeout 180     # override per-test timeout (default: 120s)
+```
+
+Each installed agent is tested as both editor (can it modify a file?) and reviewer (does it produce a review file?). Requires at least one AI tool installed and authenticated.
+
 ### Pre-commit hooks (optional)
 
 This repo uses [pre-commit](https://pre-commit.com/) to run linters locally before each commit. Install it once and you'll get automatic checks for shell scripts (shellcheck), markdown (markdownlint), and TOML syntax.

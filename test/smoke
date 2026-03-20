@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# Smoke tests — run real AI agents to verify flag acceptance and basic I/O.
+#
+# Tests each installed agent as both editor (can it modify a file?) and
+# reviewer (can it produce a review file?).  Uses a temporary git repo with
+# a small staged diff so the agents have real context to work with.
+#
+# Usage:
+#   test/smoke                  # test all installed agents
+#   test/smoke claude codex     # test only specified agents
+#   test/smoke --timeout 180    # override per-test timeout (default: 120s)
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source the library for run_agent
+unset _LIB_REVIEW_LOOP_LOADED
+# shellcheck source=lib/lib-review-loop
+source "$PROJECT_ROOT/lib/lib-review-loop"
+
+# ---- configuration -------------------------------------------------------
+
+TIMEOUT=120  # seconds per agent invocation
+ALL_AGENTS="claude codex gemini copilot"
+
+# ---- usage ---------------------------------------------------------------
+
+usage() {
+    cat <<'EOF'
+Usage: test/smoke [OPTIONS] [agent...]
+
+Run real AI agents against a fixture repo to verify flag acceptance and
+basic read/write functionality.  No arguments tests all installed agents.
+
+Options:
+  --timeout SECONDS   Per-test timeout (default: 120)
+  -h, --help          Show this help message
+
+Examples:
+  test/smoke                   # all installed agents
+  test/smoke claude            # only Claude
+  test/smoke --timeout 180     # longer timeout
+EOF
+    exit 0
+}
+
+# ---- argument parsing ----------------------------------------------------
+
+requested_agents=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --timeout)
+            [[ $# -ge 2 ]] || { echo "ERROR: --timeout requires a value"; exit 1; }
+            TIMEOUT="$2"; shift 2 ;;
+        -h|--help) usage ;;
+        -*) echo "Unknown option: $1"; usage ;;
+        *) requested_agents+=("$1"); shift ;;
+    esac
+done
+
+# ---- detect installed agents ---------------------------------------------
+
+installed=()
+for agent in $ALL_AGENTS; do
+    if command -v "$agent" &>/dev/null; then
+        installed+=("$agent")
+    fi
+done
+
+if [[ ${#installed[@]} -eq 0 ]]; then
+    echo "No AI agents found on PATH. Install at least one of: $ALL_AGENTS"
+    exit 1
+fi
+
+# Filter to requested agents
+if [[ ${#requested_agents[@]} -gt 0 ]]; then
+    agents=()
+    for req in "${requested_agents[@]}"; do
+        found=false
+        for inst in "${installed[@]}"; do
+            if [[ "$req" == "$inst" ]]; then
+                agents+=("$req")
+                found=true
+                break
+            fi
+        done
+        if ! $found; then
+            echo "WARNING: '$req' is not installed — skipping"
+        fi
+    done
+else
+    agents=("${installed[@]}")
+fi
+
+if [[ ${#agents[@]} -eq 0 ]]; then
+    echo "No testable agents remain after filtering."
+    exit 1
+fi
+
+echo ""
+echo "Smoke tests"
+echo "==========="
+echo "Agents  : ${agents[*]}"
+echo "Timeout : ${TIMEOUT}s per test"
+
+# ---- fixture setup -------------------------------------------------------
+
+# Create a temporary git repo with a staged Python file that has an obvious
+# bug (no zero-division guard).  This gives agents real context to review
+# and a clear edit to make.
+create_fixture() {
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/smoke-test.XXXXXX")
+
+    git -C "$tmpdir" init -q
+    git -C "$tmpdir" config user.name "ai-coding-setup smoke"
+    git -C "$tmpdir" config user.email "smoke-tests@example.invalid"
+    git -C "$tmpdir" commit --allow-empty -q -m "initial"
+
+    cat > "$tmpdir/calculator.py" <<'PYEOF'
+def add(a, b):
+    return a + b
+
+
+def divide(a, b):
+    return a / b
+PYEOF
+
+    git -C "$tmpdir" add calculator.py
+    git -C "$tmpdir" commit -q -m "add calculator module"
+
+    # Now make a staged change: add a multiply function (also without guard)
+    cat >> "$tmpdir/calculator.py" <<'PYEOF'
+
+
+def multiply(a, b):
+    return a * b
+PYEOF
+
+    git -C "$tmpdir" add calculator.py
+    echo "$tmpdir"
+}
+
+# ---- test runner ---------------------------------------------------------
+
+PASS=0
+FAIL=0
+RESULTS=()
+
+# Run a single smoke test.
+#   $1 — test name (for display)
+#   $2 — agent name
+#   $3 — prompt text
+#   $4 — tools (comma-separated, for Claude; ignored by others)
+#   $5 — verification function name (called after agent completes)
+#   $6 — fixture directory (agent runs here)
+run_smoke_test() {
+    local name="$1" agent="$2" prompt="$3" tools="$4" verify_fn="$5" fixture="$6"
+
+    local start_time elapsed exit_code=0
+    start_time=$(date +%s)
+
+    # Run agent in a subshell with the fixture as working directory.
+    # Capture combined output for diagnostics on failure.
+    local output_file="$fixture/.smoke-output.log"
+    (
+        cd "$fixture"
+        run_agent "$agent" "$prompt" "$tools"
+    ) > "$output_file" 2>&1 &
+    local agent_pid=$!
+
+    # Portable timeout: background a watchdog that kills the agent.
+    (
+        sleep "$TIMEOUT"
+        kill "$agent_pid" 2>/dev/null
+    ) &
+    local timer_pid=$!
+
+    wait "$agent_pid" 2>/dev/null || exit_code=$?
+
+    # Cancel the timer (may already be gone)
+    kill "$timer_pid" 2>/dev/null || true
+    wait "$timer_pid" 2>/dev/null || true
+
+    elapsed=$(( $(date +%s) - start_time ))
+
+    # Check if we timed out
+    if [[ $elapsed -ge $TIMEOUT ]]; then
+        echo -e "  ${YELLOW}TIMEOUT${NC}  $name  (>${TIMEOUT}s)"
+        RESULTS+=("TIMEOUT  $name")
+        ((FAIL++))
+        return 1
+    fi
+
+    # Check agent exit code
+    if [[ $exit_code -ne 0 ]]; then
+        echo -e "  ${RED}FAIL${NC}     $name  (${elapsed}s, exit $exit_code)"
+        # Show last few lines of output for debugging
+        if [[ -f "$output_file" ]]; then
+            echo "           --- last 5 lines of output ---"
+            tail -5 "$output_file" | sed 's/^/           /'
+        fi
+        RESULTS+=("FAIL     $name  (exit $exit_code)")
+        ((FAIL++))
+        return 1
+    fi
+
+    # Run the verification function
+    local verify_result
+    verify_result=$( "$verify_fn" "$fixture" 2>&1 ) || {
+        echo -e "  ${RED}FAIL${NC}     $name  (${elapsed}s) — $verify_result"
+        RESULTS+=("FAIL     $name  — $verify_result")
+        ((FAIL++))
+        return 1
+    }
+
+    echo -e "  ${GREEN}PASS${NC}     $name  (${elapsed}s)"
+    RESULTS+=("PASS     $name")
+    ((PASS++))
+    return 0
+}
+
+# ---- verification functions ----------------------------------------------
+
+# Verify that agent-code-review.md was created in the fixture directory.
+verify_review_file() {
+    local fixture="$1"
+    if [[ -f "$fixture/agent-code-review.md" ]]; then
+        return 0
+    else
+        echo "agent-code-review.md was not created"
+        return 1
+    fi
+}
+
+# Verify that calculator.py was modified (unstaged changes or re-staged).
+verify_file_modified() {
+    local fixture="$1"
+    if git -C "$fixture" diff --name-only | grep -q calculator.py ||
+       git -C "$fixture" diff --staged --name-only | grep -q calculator.py; then
+        return 0
+    else
+        echo "calculator.py was not modified"
+        return 1
+    fi
+}
+
+# ---- prompts -------------------------------------------------------------
+
+REVIEWER_PROMPT="Review the staged git changes (run: git diff --staged).
+
+Write your findings to agent-code-review.md with this structure:
+## Summary
+One paragraph overview.
+
+## Issues
+List any issues found.
+
+High: <count>
+Medium: <count>
+Low: <count>
+
+Verdict: good to go  OR  Verdict: needs work
+
+Keep it concise. Do not modify any source files."
+
+EDITOR_PROMPT="Read calculator.py. The divide function has no guard against division by zero.
+
+Add a check: if b is zero, raise a ValueError with the message 'Cannot divide by zero'.
+Edit only the divide function. Do not create new files."
+
+REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
+EDITOR_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
+
+# ---- run tests -----------------------------------------------------------
+
+for agent in "${agents[@]}"; do
+    echo ""
+    echo "--- $agent ---"
+
+    # Reviewer test
+    fixture=$(create_fixture)
+    run_smoke_test "$agent reviewer" "$agent" "$REVIEWER_PROMPT" "$REVIEWER_TOOLS" \
+        verify_review_file "$fixture" || true
+    rm -rf "$fixture"
+
+    # Editor test
+    fixture=$(create_fixture)
+    run_smoke_test "$agent editor" "$agent" "$EDITOR_PROMPT" "$EDITOR_TOOLS" \
+        verify_file_modified "$fixture" || true
+    rm -rf "$fixture"
+done
+
+# ---- summary -------------------------------------------------------------
+
+total=$((PASS + FAIL))
+echo ""
+echo "==========="
+echo "Results: $PASS passed, $FAIL failed out of $total tests"
+echo ""
+
+for r in "${RESULTS[@]}"; do
+    echo "  $r"
+done
+
+echo ""
+if [[ $FAIL -gt 0 ]]; then
+    exit 1
+fi

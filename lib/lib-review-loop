@@ -240,6 +240,101 @@ validate_prompts() {
     fi
 }
 
+# ---- review status checks ------------------------------------------------
+
+# Check whether a code review is clean (no actionable issues).
+# Requires REVIEW_FILE to be set by the caller.
+# Returns 0 if the review file contains "Verdict: good to go", 1 otherwise.
+test_review_clean() {
+    [[ -f "$REVIEW_FILE" ]] || return 1
+    local content
+    content=$(<"$REVIEW_FILE")
+
+    # Only an explicit "Verdict: good to go" line signals clean — a bare
+    # substring match could false-positive on "not good to go"
+    if echo "$content" | grep -qiE "verdict[[:space:]]*:[[:space:]]*good to go"; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Extract issue counts from a code review file.
+# Requires REVIEW_FILE to be set by the caller.
+# Prints: "High: N, Medium: N, Low: N" (or ? for missing counts)
+get_review_issue_counts() {
+    [[ -f "$REVIEW_FILE" ]] || { echo "No review file"; return; }
+    local content high medium low
+    content=$(<"$REVIEW_FILE")
+
+    high=$(echo "$content" | grep -oE "High[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+    medium=$(echo "$content" | grep -oE "Medium[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+    low=$(echo "$content" | grep -oE "Low[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
+
+    echo "High: ${high:-?}, Medium: ${medium:-?}, Low: ${low:-?}"
+}
+
+# Check whether a plan reviewer is satisfied (no further feedback).
+# Requires FEEDBACK_FILE to be set by the caller.
+# Returns 0 if the feedback file contains only "NO_FURTHER_FEEDBACK", 1 otherwise.
+test_reviewer_satisfied() {
+    [[ -f "$FEEDBACK_FILE" ]] || return 1
+    # Match sentinel as a standalone line to avoid false positives from
+    # feedback that merely mentions the token in explanatory text
+    local trimmed
+    trimmed=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$FEEDBACK_FILE")
+    [[ "$trimmed" == "NO_FURTHER_FEEDBACK" ]]
+}
+
+# Build the improvement prompt for the plan editor.
+#   $1 — plan file path
+#   $2 — feedback file path
+#   $3 — reviewer agent name
+#   $4 — current cycle number
+#   $5 — max cycles
+build_improvement_prompt() {
+    local plan_path="$1" feedback_path="$2" reviewer_name="$3" cycle="$4" max_cycles="$5"
+    cat <<PROMPT
+You are a senior software architect improving a plan document based on reviewer feedback.
+
+## Your Task
+
+1. **Read** the plan file: $plan_path
+2. **Read** the feedback file: $feedback_path
+3. **Evaluate** each feedback point critically. You are NOT obligated to accept every suggestion. Use your judgment:
+   - Accept and implement feedback that genuinely improves completeness, feasibility, clarity, or risk coverage.
+   - Decline feedback that is subjective preference, out of scope, or would degrade the plan.
+4. **Edit** the plan file directly to incorporate valid improvements. Do not rewrite sections that are already well-structured unless the feedback identifies a real gap.
+5. **Write** a response to $feedback_path (overwrite it) explaining your actions:
+   - For each accepted point: briefly describe what was changed and where.
+   - For each declined point: explain why (e.g., out of scope, already covered, disagree with reasoning).
+
+## Response Format
+
+Use these markers for each feedback item in your response:
+
+- Accepted: \`✅ Implemented: [brief description of what was changed]\`
+- Deferred: \`📝 Response: [reason for deferring, alternatives]\`
+- Declined: \`❌ Clarification: [reason for disagreeing]\`
+
+## Guidelines
+
+- Preserve the plan's existing structure and formatting conventions.
+- Do not add unnecessary boilerplate or padding.
+- Focus on substance: missing edge cases, risk gaps, unclear requirements, feasibility concerns.
+- If the reviewer's feedback is entirely minor or already addressed, say so clearly in your response.
+- This is cycle $cycle of $max_cycles with the $reviewer_name reviewer.
+
+## Output
+
+Your only output files are:
+- The improved plan file (edited in place)
+- The feedback response file (overwritten with your response)
+
+Do not create any other files. Do not stage or commit anything.
+PROMPT
+}
+
 # ---- temp directory with cleanup -----------------------------------------
 
 # Create a temp directory and register a cleanup trap.

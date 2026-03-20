@@ -45,7 +45,7 @@ Options:
   -r, --reviewer AGENT     Agent for code review (default: codex)
   -h, --help               Show this help message
 
-Agents: claude, codex, gemini
+Agents: claude, codex, gemini, copilot
 EOF
     exit 0
 }
@@ -83,32 +83,6 @@ EDITOR_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
 REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
 
 # ---- helpers -------------------------------------------------------------
-
-test_review_clean() {
-    [[ -f "$REVIEW_FILE" ]] || return 1
-    local content
-    content=$(<"$REVIEW_FILE")
-
-    # Only an explicit "Verdict: good to go" line signals clean — a bare
-    # substring match could false-positive on "not good to go"
-    if echo "$content" | grep -qiE "verdict[[:space:]]*:[[:space:]]*good to go"; then
-        return 0
-    fi
-
-    return 1
-}
-
-get_review_issue_counts() {
-    [[ -f "$REVIEW_FILE" ]] || { echo "No review file"; return; }
-    local content high medium low
-    content=$(<"$REVIEW_FILE")
-
-    high=$(echo "$content" | grep -oE "High[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
-    medium=$(echo "$content" | grep -oE "Medium[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
-    low=$(echo "$content" | grep -oE "Low[[:space:]]*:?[[:space:]]*[0-9]+" | grep -oE "[0-9]+" | head -1) || true
-
-    echo "High: ${high:-?}, Medium: ${medium:-?}, Low: ${low:-?}"
-}
 
 stage_review_changes() {
     # Re-stage files that are in the review scope (partially staged files are
