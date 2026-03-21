@@ -46,7 +46,7 @@ Options:
   -r, --reviewer AGENT     Agent for plan review (default: codex)
   -h, --help               Show this help message
 
-Agents: claude, codex, gemini
+Agents: claude, codex, gemini, copilot
 
 Examples:
   plan-review-loop PLAN-feature.md
@@ -97,60 +97,6 @@ REVIEWER_FOLLOWUP_PROMPT="$PROMPTS_DIR/plan-review-followup.md"
 EDITOR_TOOLS="Read,Write,Edit,Grep,Glob"
 REVIEWER_TOOLS="Read,Write,Grep,Glob"
 
-# ---- helpers -------------------------------------------------------------
-
-test_reviewer_satisfied() {
-    [[ -f "$FEEDBACK_FILE" ]] || return 1
-    # Match sentinel as a standalone line to avoid false positives from
-    # feedback that merely mentions the token in explanatory text
-    local trimmed
-    trimmed=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$FEEDBACK_FILE")
-    [[ "$trimmed" == "NO_FURTHER_FEEDBACK" ]]
-}
-
-build_improvement_prompt() {
-    local plan_path="$1" feedback_path="$2" reviewer_name="$3" cycle="$4" max_cycles="$5"
-    cat <<PROMPT
-You are a senior software architect improving a plan document based on reviewer feedback.
-
-## Your Task
-
-1. **Read** the plan file: $plan_path
-2. **Read** the feedback file: $feedback_path
-3. **Evaluate** each feedback point critically. You are NOT obligated to accept every suggestion. Use your judgment:
-   - Accept and implement feedback that genuinely improves completeness, feasibility, clarity, or risk coverage.
-   - Decline feedback that is subjective preference, out of scope, or would degrade the plan.
-4. **Edit** the plan file directly to incorporate valid improvements. Do not rewrite sections that are already well-structured unless the feedback identifies a real gap.
-5. **Write** a response to $feedback_path (overwrite it) explaining your actions:
-   - For each accepted point: briefly describe what was changed and where.
-   - For each declined point: explain why (e.g., out of scope, already covered, disagree with reasoning).
-
-## Response Format
-
-Use these markers for each feedback item in your response:
-
-- Accepted: \`✅ Implemented: [brief description of what was changed]\`
-- Deferred: \`📝 Response: [reason for deferring, alternatives]\`
-- Declined: \`❌ Clarification: [reason for disagreeing]\`
-
-## Guidelines
-
-- Preserve the plan's existing structure and formatting conventions.
-- Do not add unnecessary boilerplate or padding.
-- Focus on substance: missing edge cases, risk gaps, unclear requirements, feasibility concerns.
-- If the reviewer's feedback is entirely minor or already addressed, say so clearly in your response.
-- This is cycle $cycle of $max_cycles with the $reviewer_name reviewer.
-
-## Output
-
-Your only output files are:
-- The improved plan file (edited in place)
-- The feedback response file (overwritten with your response)
-
-Do not create any other files. Do not stage or commit anything.
-PROMPT
-}
-
 # ---- validation ----------------------------------------------------------
 if [[ ! -f "$PLAN_FILE_PATH" ]]; then
     echo -e "${RED}ERROR: Plan file not found: $PLAN_FILE_PATH${NC}"
@@ -172,8 +118,8 @@ echo -e "${MAGENTA} Plan Review Loop${NC}"
 echo -e "${MAGENTA}========================================${NC}"
 echo " Plan file      : $PLAN_FILE"
 echo " Max iterations : $MAX_ITERATIONS"
-echo " Editor          : $EDITOR_AGENT"
-echo " Reviewer        : $REVIEWER_AGENT"
+echo " Editor         : $EDITOR_AGENT"
+echo " Reviewer       : $REVIEWER_AGENT"
 
 start_time=$(date +%s)
 iteration_data=""

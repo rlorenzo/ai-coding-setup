@@ -16,3 +16,21 @@ repos:
     rev: v0.21.0
     hooks:
       - id: markdownlint-cli2
+
+  - repo: local
+    hooks:
+      - id: bats-unit-tests
+        name: BATS unit tests
+        entry: test/run
+        language: script
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: smoke-tests
+        name: Smoke tests (real agents)
+        entry: test/smoke
+        language: script
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]

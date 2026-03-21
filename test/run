@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Convenience script to run all BATS tests.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/bats/bats-core/bin/bats" "$SCRIPT_DIR"/*.bats "$@"

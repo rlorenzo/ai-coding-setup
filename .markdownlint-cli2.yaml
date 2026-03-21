@@ -1,2 +1,4 @@
 config:
   MD013: false # Line length — instructional prose runs long intentionally
+ignores:
+  - "test/fixtures/**"
