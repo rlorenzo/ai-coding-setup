@@ -118,6 +118,7 @@ create_fixture() {
     git -C "$tmpdir" init -q
     git -C "$tmpdir" config user.name "ai-coding-setup smoke"
     git -C "$tmpdir" config user.email "smoke-tests@example.invalid"
+    git -C "$tmpdir" config commit.gpgsign false
     git -C "$tmpdir" commit --allow-empty -q -m "initial"
 
     cat > "$tmpdir/calculator.py" <<'PYEOF'

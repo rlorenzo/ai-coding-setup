@@ -260,8 +260,9 @@ EOF
 
 @test "format_elapsed computes minutes and seconds" {
     source_lib
-    local start
-    start=$(( $(date +%s) - 125 ))
-    run format_elapsed "$start"
-    assert_output "2m 5s"
+    local now
+    now=$(date +%s)
+    run format_elapsed $(( now - 125 ))
+    # Allow for 1-second clock skew between date calls
+    assert_output --regexp "^2m [56]s$"
 }
