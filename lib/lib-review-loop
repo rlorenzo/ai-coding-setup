@@ -164,7 +164,7 @@ $prompt"
 #   $1 — prompt text
 run_gemini() {
     local prompt="$1"
-    echo "$prompt" | gemini -p " " --yolo --allowed-mcp-server-names "" \
+    echo "$prompt" | gemini -p " " --yolo --allowed-mcp-server-names "__none__" \
         2> >(grep -v -E 'Warning:.*deprecated|YOLO mode|Session cleanup disabled|Loaded cached credentials' >&2)
 }
 
