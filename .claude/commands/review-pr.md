@@ -20,33 +20,7 @@ Extract owner/name from `gh repo view --json owner,name`. Set `IGNORED_FILE=".re
 
 Run `gh pr checks`. On failure: `gh run view <run_id> --log-failed`, fix, commit, push, wait for green.
 
-### 2. Ensure bot review covers latest commit
-
-Get HEAD SHA: `gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid'`. Bots = logins ending in `[bot]`. Fetch their latest reviews:
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-  --jq '[.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login) | map(max_by(.submitted_at))'
-```
-
-If no bot review matches HEAD, request one and poll (first check 8 min, timeout 15 min, poll 60 s). GitHub's REST API fully supports requesting reviews from bot accounts — do not skip this.
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/requested_reviewers \
-  -X POST -f "reviewers[]={bot_login}"
-
-end=$((SECONDS+900)); sleep 480
-while [ $SECONDS -lt $end ]; do
-  commit_id=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-    --jq '[.[] | select(.user.login=="{bot}")] | max_by(.submitted_at) | .commit_id')
-  [ "$commit_id" = "$head_sha" ] && break
-  sleep 60
-done
-```
-
-Timeout → tell user to retry later and stop.
-
-### 3. Fetch unresolved threads
+### 2. Fetch unresolved threads
 
 ALWAYS re-fetch fresh each iteration. Use `gh api graphql --paginate --slurp` with `$endCursor`:
 
@@ -68,9 +42,9 @@ gh api graphql --paginate --slurp \
 
 **Auto-resolve:** If a thread's first comment body matches any `$IGNORED_FILE` entry (`grep -qxF`), resolve via `resolveReviewThread` mutation without classifying.
 
-**Exit:** Zero unresolved threads + bot review on HEAD → success. Stop.
+If unresolved threads remain → step 3. Do NOT re-request a bot review while threads are still open — process existing feedback first. Only when zero unresolved threads remain → step 5.
 
-### 4. Classify and resolve
+### 3. Classify and resolve
 
 Read referenced file + context for each remaining thread, then classify:
 
@@ -78,12 +52,40 @@ Read referenced file + context for each remaining thread, then classify:
 - **Valid fix** — implement minimal change. Must meet ALL: (1) fixes a real bug — wrong behavior, data loss, security, crash, or race condition; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
 - **Nitpick / Low-value** — resolve WITHOUT implementing. Includes: style preferences not enforced by linter, docstring suggestions on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append body to `$IGNORED_FILE`, reply with one-line rationale, resolve.
 
-### 5. Push fixes
+### 4. Push fixes
 
-Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed threads.
+Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed threads. Loop back to step 2.
 
-### 6. Re-request bot review and loop
+### 5. Ensure bot review covers latest commit
 
-Re-request review from the same bots and poll using the same snippet from step 2. Timeout → tell user to re-run `/review-pr`. Success → go back to step 3.
+Only reached when zero unresolved threads remain. Get HEAD SHA: `gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid'`. Bots = logins ending in `[bot]`. Fetch their latest reviews:
 
-Declare success when step 3 finds zero unresolved threads with bot review on HEAD. Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.
+```bash
+gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
+  --jq '[.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login) | map(max_by(.submitted_at))'
+```
+
+If a bot's latest review already covers HEAD → success. Stop.
+
+Otherwise, re-request and poll (first check 8 min, timeout 15 min, poll 60 s). `gh pr edit --add-reviewer` re-requests reviews from existing bot reviewers — do not skip this.
+
+```bash
+bot_logins=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
+  --jq '[.[] | select(.user.login | endswith("[bot]")) | .user.login] | unique | .[]')
+
+for bot in $bot_logins; do
+  gh pr edit {PR_NUMBER} --add-reviewer "$bot"
+done
+
+end=$((SECONDS+900)); sleep 480
+while [ $SECONDS -lt $end ]; do
+  commit_id=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
+    --jq '[.[] | select(.user.login=="{bot}")] | max_by(.submitted_at) | .commit_id')
+  [ "$commit_id" = "$head_sha" ] && break
+  sleep 60
+done
+```
+
+Timeout → tell user to re-run `/review-pr` and stop. Success → go back to step 2.
+
+Declare success when step 2 finds zero unresolved threads AND step 5 confirms a bot review on HEAD. Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.

@@ -4,7 +4,7 @@ Set of prompts, skills, and scripts to aid in utilizing AI coding agents in deve
 
 ## Prerequisites
 
-- [GitHub CLI (`gh`)](https://cli.github.com/) — installed and authenticated
+- [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+ — installed and authenticated (`/review-pr` uses `gh pr edit --add-reviewer` to reliably re-request reviews from existing bot reviewers)
 - [Node.js (`npx`)](https://nodejs.org/) — required for MCP servers
 - At least one of the following AI coding tools:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
