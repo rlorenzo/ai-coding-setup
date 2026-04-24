@@ -190,7 +190,21 @@ run_smoke_test() {
 
     # Check if we timed out
     if [[ $elapsed -ge $TIMEOUT ]]; then
+        # Gemini retries indefinitely on rate limits. Only skip when the
+        # output shows positive rate-limit evidence; otherwise fall through
+        # so real hangs/regressions still fail the smoke test.
+        if [[ "$agent" == "gemini" ]] && [[ -f "$output_file" ]] && \
+           grep -qE -i 'rate[- ]?limit|resource_exhausted|quota|(^|[^0-9])429([^0-9]|$)' "$output_file"; then
+            echo -e "  ${YELLOW}SKIP${NC}     $name  (rate-limited)"
+            RESULTS+=("SKIP     $name  (rate-limited)")
+            ((SKIPPED++))
+            return 0
+        fi
         echo -e "  ${YELLOW}TIMEOUT${NC}  $name  (>${TIMEOUT}s)"
+        if [[ -f "$output_file" ]]; then
+            echo "           --- last 5 lines of output ---"
+            tail -5 "$output_file" | sed 's/^/           /'
+        fi
         RESULTS+=("TIMEOUT  $name")
         ((FAIL++))
         return 1
@@ -276,6 +290,8 @@ Edit only the divide function. Do not create new files."
 REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
 EDITOR_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
 
+SKIPPED=0
+
 # ---- run tests -----------------------------------------------------------
 
 for agent in "${agents[@]}"; do
@@ -297,10 +313,10 @@ done
 
 # ---- summary -------------------------------------------------------------
 
-total=$((PASS + FAIL))
+total=$((PASS + FAIL + SKIPPED))
 echo ""
 echo "==========="
-echo "Results: $PASS passed, $FAIL failed out of $total tests"
+echo "Results: $PASS passed, $FAIL failed, $SKIPPED skipped out of $total tests"
 echo ""
 
 for r in "${RESULTS[@]}"; do

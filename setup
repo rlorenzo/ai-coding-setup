@@ -503,6 +503,14 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
         feature_changes+=("teams")
     fi
+    if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
+        feature_changes+=("noflicker")
+    fi
+    if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+        if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_USE_POWERSHELL_TOOL' &>/dev/null; then
+            feature_changes+=("powershell")
+        fi
+    fi
 
     # ── Check read-only permissions (batch jq, handles legacy :* format) ──
     local perms_json
@@ -533,6 +541,8 @@ configure_claude_settings() {
                 websearch)   echo -e "  • ${BOLD}WebSearch${NC} — allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC} — disable commit/PR attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC} — enable agent teams" ;;
+                noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC} — flicker-free fullscreen rendering" ;;
+                powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC} — enable native PowerShell tool" ;;
             esac
         done
         echo ""
@@ -543,6 +553,8 @@ configure_claude_settings() {
                     websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = {"commit": "", "pr": ""}') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                    noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
+                    powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
                 esac
             done
             changed=true
