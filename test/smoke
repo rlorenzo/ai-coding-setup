@@ -24,7 +24,8 @@ source "$PROJECT_ROOT/lib/lib-review-loop"
 # ---- configuration -------------------------------------------------------
 
 TIMEOUT=120  # seconds per agent invocation
-ALL_AGENTS="claude codex gemini copilot"
+ALL_AGENTS="claude codex gemini copilot antigravity"
+export GEMINI_CLI_TRUST_WORKSPACE=true
 
 # ---- usage ---------------------------------------------------------------
 
@@ -65,7 +66,7 @@ done
 
 installed=()
 for agent in $ALL_AGENTS; do
-    if command -v "$agent" &>/dev/null; then
+    if command -v "$(agent_command "$agent")" &>/dev/null; then
         installed+=("$agent")
     fi
 done
