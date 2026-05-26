@@ -45,7 +45,7 @@ Options:
   -r, --reviewer AGENT     Agent for code review (default: codex)
   -h, --help               Show this help message
 
-Agents: claude, codex, gemini, copilot
+Agents: claude, codex, gemini, copilot, antigravity
 EOF
     exit 0
 }
