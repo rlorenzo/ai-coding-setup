@@ -137,12 +137,15 @@ validate_positive_int() {
 
 # Run Claude Code with a prompt and optional tool restrictions.
 # Disables all MCP servers to keep autonomous runs scoped to local work.
+# Pipes the prompt via stdin — passing it as an argv on Windows/MSYS hits the
+# OS exec limit (~32 KB) and fails with "Argument list too long" for large
+# prompts (e.g. the final review-loop summary).
 #   $1 — prompt text
 #   $2 — comma-separated allowed tools (default: Edit,Read,Write,Bash,Grep,Glob)
 run_claude() {
     local prompt="$1"
     local tools="${2:-Edit,Read,Write,Bash,Grep,Glob}"
-    claude -p "$prompt" --allowedTools "$tools" \
+    printf '%s' "$prompt" | claude -p --allowedTools "$tools" \
         --strict-mcp-config --mcp-config '{"mcpServers":{}}'
 }
 
@@ -180,6 +183,13 @@ run_antigravity() {
 # Run Copilot CLI with a prompt in non-interactive autonomous mode.
 # Uses --autopilot for multi-step execution and --yolo for auto-approval.
 # Disables MCP servers to keep autonomous runs scoped to local review work.
+#
+# KNOWN LIMITATION: the prompt is passed as an argv, which on Windows/MSYS
+# hits the OS exec limit (~32 KB) for very large prompts (e.g. the final
+# review-loop summary) and fails with "Argument list too long". Unlike the
+# other agents, Copilot does not currently support reading the prompt from
+# stdin — `copilot -p` ignores stdin, and bare stdin is interpreted as CLI
+# options rather than as a prompt. See github/copilot-cli#683 and #1046.
 #   $1 — prompt text
 run_copilot() {
     local prompt="$1"
