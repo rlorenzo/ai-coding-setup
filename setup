@@ -60,7 +60,7 @@ done
 # Format: "name|command|arg1,arg2,...|permission_pattern"
 # To add a new MCP server, append an entry here.
 MCP_SERVERS=(
-    "playwright|npx|@playwright/mcp@latest|mcp__playwright__browser_*"
+    "playwright|npx|@playwright/mcp@latest|mcp__playwright__*"
 )
 
 # ---- helpers --------------------------------------------------------------
