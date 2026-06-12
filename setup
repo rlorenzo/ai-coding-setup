@@ -187,8 +187,8 @@ is_mcp_configured() {
                 && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.copilot/mcp-config.json" &>/dev/null
             ;;
         antigravity)
-            [[ -f "$HOME/.gemini/antigravity-cli/settings.json" ]] \
-                && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.gemini/antigravity-cli/settings.json" &>/dev/null
+            [[ -f "$HOME/.gemini/antigravity-cli/mcp_config.json" ]] \
+                && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.gemini/antigravity-cli/mcp_config.json" &>/dev/null
             ;;
     esac
 }
@@ -218,9 +218,9 @@ add_mcp_server() {
             echo "$updated" | jq . > "$config"
             ;;
         antigravity)
-            local config="$HOME/.gemini/antigravity-cli/settings.json"
+            local config="$HOME/.gemini/antigravity-cli/mcp_config.json"
             mkdir -p "$(dirname "$config")"
-            [[ -f "$config" ]] || echo '{}' > "$config"
+            [[ -f "$config" ]] || echo '{"mcpServers":{}}' > "$config"
             local args_json updated
             args_json=$(printf '%s\n' "$@" | jq -R . | jq -s .)
             updated=$(jq --arg n "$name" --arg c "$cmd" --argjson a "$args_json" \
