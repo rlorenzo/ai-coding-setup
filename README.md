@@ -86,6 +86,16 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 - Copilot CLI: `/code-review`
 - Antigravity CLI: `/code-review`
 
+### /efficient-opus
+
+Run a task with Claude Opus as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (Opus for complex work, Sonnet for low/medium, Haiku for mechanical), keeps Opus's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and — for long unattended runs — auto-pauses and resumes across the 5-hour and weekly usage windows.
+
+Opus-specific, so it's installed for Claude Code only.
+
+**Usage:**
+
+- Claude Code: `/efficient-opus`
+
 ## Review Loops
 
 Two multi-agent feedback loops live in [bin/](bin/): `code-review-loop` (for staged code) and `plan-review-loop` (for plan documents). Each loop pairs an **editor** agent with a different **reviewer** agent and iterates until the reviewer is satisfied or `--max-iterations` is hit. Using two different models for editing and reviewing surfaces issues a single agent tends to miss in its own output.
