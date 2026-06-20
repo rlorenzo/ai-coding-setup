@@ -3,8 +3,8 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # ai-coding-setup installer
-# Installs AI coding agent commands/skills for Claude Code, Gemini CLI,
-# Codex CLI, Copilot CLI, and Antigravity CLI from this repo into user-level
+# Installs AI coding agent commands/skills for Claude Code, Codex CLI,
+# Copilot CLI, and Antigravity CLI from this repo into user-level
 # directories.
 # ---------------------------------------------------------------------------
 
@@ -17,7 +17,6 @@ DIM='\033[2m'
 NC='\033[0m'
 
 MD_MARKER="<!-- source: ai-coding-setup -->"
-TOML_MARKER="# source: ai-coding-setup"
 FORCE=false
 
 # ---- read-only permission sets --------------------------------------------
@@ -101,12 +100,6 @@ get_md_description() {
     echo "${desc:-No description available}"
 }
 
-get_toml_description() {
-    local desc
-    desc=$(grep -m 1 '^description' "$1" | sed 's/^description[[:space:]]*=[[:space:]]*"\(.*\)"/\1/')
-    echo "${desc:-No description available}"
-}
-
 get_skill_description() {
     local desc
     desc=$(grep -m 1 '^description:' "$1" | sed "s/^description:[[:space:]]*//; s/^['\"]//; s/['\"]$//")
@@ -174,10 +167,6 @@ is_mcp_configured() {
             [[ -f "$HOME/.claude.json" ]] \
                 && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.claude.json" &>/dev/null
             ;;
-        gemini)
-            [[ -f "$HOME/.gemini/settings.json" ]] \
-                && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.gemini/settings.json" &>/dev/null
-            ;;
         codex)
             [[ -f "$HOME/.codex/config.toml" ]] \
                 && grep -qF "[mcp_servers.${name}]" "$HOME/.codex/config.toml" 2>/dev/null
@@ -206,7 +195,6 @@ add_mcp_server() {
     fi
     case "$tool" in
         claude)  claude mcp add --scope user "$name" -- "$cmd" "$@" 2>/dev/null ;;
-        gemini)  gemini mcp add --scope user "$name" "$cmd" "$@" 2>/dev/null ;;
         codex)   codex mcp add "$name" -- "$cmd" "$@" 2>/dev/null ;;
         copilot)
             local config="$HOME/.copilot/mcp-config.json"
@@ -240,11 +228,6 @@ is_mcp_permitted() {
                 && jq -e --arg p "$permission" '(.permissions.allow // []) | index($p)' \
                     "$HOME/.claude/settings.json" &>/dev/null
             ;;
-        gemini)
-            [[ -f "$HOME/.gemini/settings.json" ]] \
-                && jq -e --arg p "$permission" '(.tools.allowed // []) | index($p)' \
-                    "$HOME/.gemini/settings.json" &>/dev/null
-            ;;
         antigravity)
             [[ -f "$HOME/.gemini/antigravity-cli/settings.json" ]] \
                 && jq -e --arg p "$permission" '(.permissions.allow // []) | index($p)' \
@@ -263,13 +246,6 @@ add_mcp_permission() {
             local updated
             updated=$(jq --arg p "$permission" \
                 '.permissions.allow = ((.permissions.allow // []) + [$p])' "$file")
-            echo "$updated" | jq . > "$file"
-            ;;
-        gemini)
-            local file="$HOME/.gemini/settings.json"
-            local updated
-            updated=$(jq --arg p "$permission" \
-                '.tools.allowed = ((.tools.allowed // []) + [$p])' "$file")
             echo "$updated" | jq . > "$file"
             ;;
         antigravity)
@@ -622,113 +598,6 @@ configure_claude_settings() {
     fi
 }
 
-# ---- Gemini CLI settings configuration -------------------------------------
-
-configure_gemini_settings() {
-    local settings_file="$HOME/.gemini/settings.json"
-    local policy_dir="$HOME/.gemini/policies"
-    local policy_src=".gemini/policies/readonly-tools.toml"
-    local policy_dest="$policy_dir/readonly-tools.toml"
-
-    echo ""
-    echo -e "${BOLD}── Gemini CLI Settings ──${NC}"
-
-    mkdir -p "$HOME/.gemini" "$policy_dir"
-
-    # Ensure settings.json exists so downstream functions (e.g. add_mcp_permission)
-    # can safely run jq against it on fresh installs.
-    if [[ ! -f "$settings_file" ]]; then
-        echo '{}' > "$settings_file"
-    fi
-
-    if ! jq empty "$settings_file" 2>/dev/null; then
-        print_warning "$HOME/.gemini/settings.json is not valid JSON — skipping"
-        return
-    fi
-
-    local actions=()
-
-    # ── Check if policy file needs install/update ───────────────
-    if [[ -f "$policy_src" ]]; then
-        if [[ ! -f "$policy_dest" ]]; then
-            actions+=("install_policy")
-        elif ! has_marker "$TOML_MARKER" "$policy_dest"; then
-            # Exists but not managed by us — skip unless forced
-            if $FORCE; then
-                actions+=("install_policy")
-            fi
-        elif ! is_up_to_date "$policy_src" "$policy_dest" "$TOML_MARKER"; then
-            actions+=("update_policy")
-        fi
-    fi
-
-    # ── Check for deprecated tools.allowed to migrate ──────────
-    # Only flag for migration when there are non-MCP entries (mcp__* entries
-    # are auto-approve permissions that belong in tools.allowed).
-    if [[ -f "$settings_file" ]] && jq empty "$settings_file" 2>/dev/null; then
-        if jq -e '[.tools.allowed[]? | select(startswith("mcp__") | not)] | length > 0' \
-                "$settings_file" &>/dev/null; then
-            actions+=("migrate_tools_allowed")
-        fi
-    fi
-
-    # ── Nothing to do? ──────────────────────────────────────────
-    if [[ ${#actions[@]} -eq 0 ]]; then
-        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
-        return
-    fi
-
-    # ── Install / update policy file ───────────────────────────
-    local policy_active=false
-    if [[ " ${actions[*]} " == *" install_policy "* ]] || [[ " ${actions[*]} " == *" update_policy "* ]]; then
-        local verb="Install"
-        [[ " ${actions[*]} " == *" update_policy "* ]] && verb="Update"
-
-        echo ""
-        echo "  Read-only permissions policy file:"
-        echo -e "    ${BOLD}$policy_dest${NC}"
-        echo ""
-        echo "  Covers: web tools, built-in read tools, git, gh, file inspection,"
-        echo "  text processing, and system info commands."
-        echo ""
-        if prompt_yes_no "  $verb read-only policy file?"; then
-            cp "$policy_src" "$policy_dest"
-            has_marker "$TOML_MARKER" "$policy_dest" || printf '\n%s\n' "$TOML_MARKER" >> "$policy_dest"
-            print_success "${verb}ed $policy_dest"
-            policy_active=true
-        else
-            print_info "Skipped policy file"
-        fi
-    elif has_marker "$TOML_MARKER" "$policy_dest" 2>/dev/null; then
-        # Policy file already installed and up-to-date
-        policy_active=true
-    fi
-
-    # ── Migrate deprecated tools.allowed ───────────────────────
-    # Only offer migration when the policy file is in place, otherwise
-    # removing tools.allowed leaves the user with no configured permissions.
-    if [[ " ${actions[*]} " == *" migrate_tools_allowed "* ]] && $policy_active; then
-        echo ""
-        echo -e "  ${YELLOW}Deprecated:${NC} tools.allowed in settings.json"
-        echo "  These permissions are now handled by the Policy Engine file above."
-        echo ""
-        if prompt_yes_no "  Remove deprecated tools.allowed from settings.json?"; then
-            local updated
-            # Preserve MCP auto-approve entries (mcp__*); only strip non-MCP entries.
-            # Delete only .tools.allowed (not the entire .tools object) to keep
-            # any other user settings under .tools intact.
-            updated=$(jq '
-                .tools.allowed = [.tools.allowed[] | select(startswith("mcp__"))]
-                | if .tools.allowed == [] then del(.tools.allowed) else . end
-            ' "$settings_file")
-            echo "$updated" | jq . > "$settings_file"
-            print_success "Removed deprecated tools.allowed from settings.json"
-        else
-            print_info "Kept tools.allowed (Gemini will show a deprecation warning)"
-        fi
-    fi
-}
-
 # ---- Codex CLI settings configuration ---------------------------------------
 
 configure_codex_settings() {
@@ -963,8 +832,8 @@ done
 
 # ---- prerequisite checks --------------------------------------------------
 
-if [[ ! -d ".claude/commands" ]] && [[ ! -d ".gemini/commands" ]] && [[ ! -d ".codex/skills" ]] && [[ ! -d ".copilot/skills" ]] && [[ ! -d ".antigravity/skills" ]]; then
-    print_error "No command directories found (.claude/commands, .gemini/commands, .codex/skills, .copilot/skills, .antigravity/skills)."
+if [[ ! -d ".claude/commands" ]] && [[ ! -d ".codex/skills" ]] && [[ ! -d ".copilot/skills" ]] && [[ ! -d ".antigravity/skills" ]]; then
+    print_error "No command directories found (.claude/commands, .codex/skills, .copilot/skills, .antigravity/skills)."
     print_error "Please run this script from the ai-coding-setup repository root."
     exit 1
 fi
@@ -1000,10 +869,6 @@ if command -v claude &>/dev/null; then
     detected_tools+=("claude")
 fi
 
-if command -v gemini &>/dev/null; then
-    detected_tools+=("gemini")
-fi
-
 if command -v codex &>/dev/null; then
     detected_tools+=("codex")
 fi
@@ -1021,33 +886,11 @@ if [[ ${#detected_tools[@]} -eq 0 ]]; then
     echo ""
     echo "  Install at least one of:"
     echo "  - Claude Code:      https://docs.anthropic.com/en/docs/claude-code"
-    echo "  - Gemini CLI:       https://github.com/google-gemini/gemini-cli"
     echo "  - Codex CLI:        https://github.com/openai/codex"
     echo "  - Copilot CLI:      https://docs.github.com/en/copilot/copilot-cli"
     echo "  - Antigravity CLI:  https://antigravity.google/"
     echo ""
     exit 1
-fi
-
-# ---- Gemini CLI EOL notice -------------------------------------------------
-# Google is transitioning Gemini CLI free/Pro/Ultra tiers to Antigravity CLI on
-# 2026-06-18. Enterprise/Cloud users are unaffected. Surface this once at
-# detection time so users know to migrate.
-
-if printf '%s\n' "${detected_tools[@]}" | grep -qx gemini; then
-    echo ""
-    if [[ "$(date -u +%Y%m%d)" -ge 20260618 ]]; then
-        print_warning "Gemini CLI free/Pro/Ultra tiers reached end-of-life on 2026-06-18."
-        echo "  Those tiers are now served by Antigravity CLI (agy). If you don't have a"
-        echo "  Gemini Code Assist Standard/Enterprise license or a paid API key,"
-        echo "  uninstall Gemini CLI and use Antigravity CLI instead."
-        echo "  Migration guide: https://antigravity.google/docs/gcli-migration"
-    else
-        print_warning "Gemini CLI free/Pro/Ultra tiers stop serving on 2026-06-18."
-        echo "  Those tiers move to Antigravity CLI (agy). Plan to migrate before then;"
-        echo "  Enterprise/Cloud users are unaffected."
-        echo "  Migration guide: https://antigravity.google/docs/gcli-migration"
-    fi
 fi
 
 # ---- tool selection --------------------------------------------------------
@@ -1060,7 +903,6 @@ for i in "${!detected_tools[@]}"; do
     tool="${detected_tools[$i]}"
     case "$tool" in
         claude)      echo -e "  ${BOLD}$((i + 1)))${NC} Claude Code" ;;
-        gemini)      echo -e "  ${BOLD}$((i + 1)))${NC} Gemini CLI" ;;
         codex)       echo -e "  ${BOLD}$((i + 1)))${NC} Codex CLI" ;;
         copilot)     echo -e "  ${BOLD}$((i + 1)))${NC} Copilot CLI" ;;
         antigravity) echo -e "  ${BOLD}$((i + 1)))${NC} Antigravity CLI" ;;
@@ -1098,13 +940,6 @@ for tool in "${selected_tools[@]}"; do
                 "file:md" "$MD_MARKER" "/" "get_md_description"
             configure_claude_settings
             configure_mcp "claude" "Claude Code" "claude"
-            ;;
-        gemini)
-            install_commands "Gemini CLI" \
-                ".gemini/commands" "$HOME/.gemini/commands" \
-                "file:toml" "$TOML_MARKER" "/" "get_toml_description"
-            configure_gemini_settings
-            configure_mcp "gemini" "Gemini CLI" "gemini"
             ;;
         codex)
             install_commands "Codex CLI" \
@@ -1224,10 +1059,10 @@ fi
 config_file="$HOME/.ai-coding-setup.conf"
 if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
     # Pick defaults from installed tools.  Prefer claude for editing (strong at
-    # code changes) and codex/gemini for reviewing (second opinion), but fall
+    # code changes) and codex for reviewing (second opinion), but fall
     # back to the same agent for both roles if only one tool is available.
     _default_editor="" _default_reviewer=""
-    for _t in claude codex gemini copilot antigravity; do
+    for _t in claude codex copilot antigravity; do
         [[ " ${selected_tools[*]} " == *" $_t "* ]] || continue
         [[ -z "$_default_editor" ]] && _default_editor="$_t"
         [[ -n "$_default_editor" ]] && [[ "$_t" != "$_default_editor" ]] && _default_reviewer="$_t"
@@ -1247,10 +1082,10 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
 # ai-coding-setup — default agent configuration for review loops.
 # These defaults can be overridden per-invocation with --editor / --reviewer flags.
 
-# Agent for editing/implementation (claude, codex, gemini, copilot, antigravity)
+# Agent for editing/implementation (claude, codex, copilot, antigravity)
 EDITOR_AGENT=$_default_editor
 
-# Agent for reviewing (claude, codex, gemini, copilot, antigravity)
+# Agent for reviewing (claude, codex, copilot, antigravity)
 REVIEWER_AGENT=$_default_reviewer
 CONF
         print_success "Created $config_file"
@@ -1269,7 +1104,6 @@ echo "Use your commands in:"
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
         claude)      echo -e "  Claude Code      — type ${BOLD}/command-name${NC} in the prompt" ;;
-        gemini)      echo -e "  Gemini CLI       — type ${BOLD}/command-name${NC} in the prompt" ;;
         codex)       echo -e "  Codex CLI        — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
         copilot)     echo -e "  Copilot CLI      — type ${BOLD}/skill-name${NC} in the prompt" ;;
         antigravity) echo -e "  Antigravity CLI  — type ${BOLD}/skill-name${NC} in the prompt" ;;

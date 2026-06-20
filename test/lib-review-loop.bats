@@ -10,7 +10,7 @@ load test_helper
 
 @test "validate_agent_name accepts all valid agents" {
     source_lib
-    for agent in claude codex gemini copilot antigravity; do
+    for agent in claude codex copilot antigravity; do
         run validate_agent_name "$agent" "--editor"
         assert_success
     done
@@ -107,13 +107,13 @@ load test_helper
 @test "load_config sets agents from config file" {
     source_lib
     cat > "$HOME/.ai-coding-setup.conf" <<'EOF'
-EDITOR_AGENT=gemini
+EDITOR_AGENT=codex
 REVIEWER_AGENT=copilot
 EOF
     EDITOR_AGENT=""
     REVIEWER_AGENT=""
     load_config
-    assert [ "$EDITOR_AGENT" = "gemini" ]
+    assert [ "$EDITOR_AGENT" = "codex" ]
     assert [ "$REVIEWER_AGENT" = "copilot" ]
 }
 
@@ -137,13 +137,13 @@ EOF
     source_lib
     cat > "$HOME/.ai-coding-setup.conf" <<'EOF'
 EDITOR_AGENT="codex"
-REVIEWER_AGENT='gemini'
+REVIEWER_AGENT='copilot'
 EOF
     EDITOR_AGENT=""
     REVIEWER_AGENT=""
     load_config
     assert [ "$EDITOR_AGENT" = "codex" ]
-    assert [ "$REVIEWER_AGENT" = "gemini" ]
+    assert [ "$REVIEWER_AGENT" = "copilot" ]
 }
 
 @test "load_config is no-op when config file missing" {

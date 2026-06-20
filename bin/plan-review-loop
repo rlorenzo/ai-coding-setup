@@ -46,7 +46,7 @@ Options:
   -r, --reviewer AGENT     Agent for plan review (default: codex)
   -h, --help               Show this help message
 
-Agents: claude, codex, gemini, copilot, antigravity
+Agents: claude, codex, copilot, antigravity
 
 Examples:
   plan-review-loop PLAN-feature.md
