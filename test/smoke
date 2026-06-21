@@ -24,8 +24,7 @@ source "$PROJECT_ROOT/lib/lib-review-loop"
 # ---- configuration -------------------------------------------------------
 
 TIMEOUT=120  # seconds per agent invocation
-ALL_AGENTS="claude codex gemini copilot antigravity"
-export GEMINI_CLI_TRUST_WORKSPACE=true
+ALL_AGENTS="claude codex copilot antigravity"
 
 # ---- usage ---------------------------------------------------------------
 
@@ -191,16 +190,6 @@ run_smoke_test() {
 
     # Check if we timed out
     if [[ $elapsed -ge $TIMEOUT ]]; then
-        # Gemini retries indefinitely on rate limits. Only skip when the
-        # output shows positive rate-limit evidence; otherwise fall through
-        # so real hangs/regressions still fail the smoke test.
-        if [[ "$agent" == "gemini" ]] && [[ -f "$output_file" ]] && \
-           grep -qE -i 'rate[- ]?limit|resource_exhausted|quota|(^|[^0-9])429([^0-9]|$)' "$output_file"; then
-            echo -e "  ${YELLOW}SKIP${NC}     $name  (rate-limited)"
-            RESULTS+=("SKIP     $name  (rate-limited)")
-            ((SKIPPED++))
-            return 0
-        fi
         echo -e "  ${YELLOW}TIMEOUT${NC}  $name  (>${TIMEOUT}s)"
         if [[ -f "$output_file" ]]; then
             echo "           --- last 5 lines of output ---"
