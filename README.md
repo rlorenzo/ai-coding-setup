@@ -80,15 +80,15 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 - Copilot CLI: `/code-review`
 - Antigravity CLI: `/code-review`
 
-### /efficient-opus
+### /efficient-orchestration
 
-Run a task with Claude Opus as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (Opus for complex work, Sonnet for low/medium, Haiku for mechanical), keeps Opus's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and — for long unattended runs — auto-pauses and resumes across the 5-hour and weekly usage windows.
+Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across the 5-hour and weekly usage windows. Model names are pinned in one reference ladder inside the command; the rest is written relative to whatever tier you are on, so it reads correctly whether you run Fable, Opus, or Sonnet.
 
-Opus-specific, so it's installed for Claude Code only.
+Relies on Task-tool subagent delegation, a Claude Code feature, so it's installed for Claude Code only.
 
 **Usage:**
 
-- Claude Code: `/efficient-opus`
+- Claude Code: `/efficient-orchestration`
 
 ## Review Loops
 
