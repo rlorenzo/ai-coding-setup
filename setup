@@ -383,7 +383,7 @@ install_commands() {
     echo -e "${BOLD}── ${display_name} ──${NC}"
     mkdir -p "$dest_dir"
 
-    local installed=0 updated=0 skipped=0 current=0
+    local installed=0 updated=0 skipped=0 current=0 pruned=0
 
     for entry in "${entries[@]}"; do
         local cmd_name src_file dest_file dest_entry
@@ -467,7 +467,43 @@ install_commands() {
         fi
     done
 
-    echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
+    # Prune our stale orphans: dest entries that carry our marker but no longer
+    # have a matching source (a command renamed or removed in the repo). The
+    # marker guarantees these were installed by us, so removing them is safe;
+    # unmarked (custom) files are never touched. The early return above on an
+    # empty source dir keeps this from wiping a whole category.
+    local d f fname name found s pext
+    if [[ "$mode" == skill ]]; then
+        while IFS= read -r -d '' d; do
+            [[ -f "$d/SKILL.md" ]] || continue
+            name=$(basename "$d"); found=false
+            for s in "${entries[@]}"; do
+                [[ "$(basename "$s")" == "$name" ]] && { found=true; break; }
+            done
+            $found && continue
+            has_marker "$marker" "$d/SKILL.md" || continue
+            rm -rf "$d"
+            print_info "Removed stale ${prefix}${name} (no longer in repo)"
+            ((++pruned))
+        done < <(find "$dest_dir" -mindepth 1 -maxdepth 1 -type d -print0)
+    else
+        pext="${mode#file:}"
+        while IFS= read -r -d '' f; do
+            fname=$(basename "$f"); name="${fname%."$pext"}"; found=false
+            for s in "${entries[@]}"; do
+                [[ "$(basename "$s")" == "$fname" ]] && { found=true; break; }
+            done
+            $found && continue
+            has_marker "$marker" "$f" || continue
+            rm -f "$f"
+            print_info "Removed stale ${prefix}${name} (no longer in repo)"
+            ((++pruned))
+        done < <(find "$dest_dir" -maxdepth 1 -name "*.$pext" -print0)
+    fi
+
+    local prune_note=""
+    [[ $pruned -gt 0 ]] && prune_note=", $pruned removed"
+    echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped${prune_note}"
 }
 
 # ---- Claude Code settings configuration ------------------------------------
