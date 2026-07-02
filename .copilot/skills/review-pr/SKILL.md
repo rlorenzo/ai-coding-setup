@@ -25,7 +25,7 @@ Run `gh pr checks`. On failure: `gh run view <run_id> --log-failed`, fix, commit
 
 ### 2. Fetch unresolved threads
 
-ALWAYS re-fetch fresh each iteration. Use `gh api graphql --paginate --slurp` with `$endCursor`:
+ALWAYS re-fetch fresh each iteration. Use `gh api graphql --paginate --slurp` with `$endCursor`, then pipe to `jq` (`--slurp` can't be combined with `--jq`):
 
 ```bash
 gh api graphql --paginate --slurp \
@@ -40,7 +40,7 @@ gh api graphql --paginate --slurp \
     }
   }' \
   -f owner="{owner}" -f repo="{repo}" -F pr={PR_NUMBER} \
-  --jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)]'
+  | jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)]'
 ```
 
 **Auto-resolve:** If a thread's first comment body matches any `$IGNORED_FILE` entry (`grep -qxF`), resolve via `resolveReviewThread` mutation without classifying.
