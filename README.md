@@ -186,9 +186,9 @@ For each agent you select, `setup` installs it when missing and updates it when 
 This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature). To manage it yourself:
 
 ```bash
-gh skill install cli/cli gh --scope user   # install (defaults to the current agent)
-gh skill update gh                          # update
-gh skill list --agent claude-code          # verify
+gh skill install cli/cli gh --agent claude-code --scope user   # install for one agent
+gh skill update gh                                             # update (all hosts where it's installed)
+gh skill list --agent claude-code                              # verify
 ```
 
 There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent — e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list` to find the exact `path`).
