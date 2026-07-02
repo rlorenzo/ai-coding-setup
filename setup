@@ -707,7 +707,6 @@ gh_skill_available() {
 gh_skill_agent_id() {
     case "$1" in
         claude)      echo "claude-code" ;;
-        gemini)      echo "gemini-cli" ;;
         codex)       echo "codex" ;;
         copilot)     echo "github-copilot" ;;
         antigravity) echo "antigravity" ;;
@@ -1047,7 +1046,6 @@ if gh_skill_available; then
     for tool in "${selected_tools[@]}"; do
         case "$tool" in
             claude)      configure_gh_skill "claude" "Claude Code" ;;
-            gemini)      configure_gh_skill "gemini" "Gemini CLI" ;;
             codex)       configure_gh_skill "codex" "Codex CLI" ;;
             copilot)     configure_gh_skill "copilot" "Copilot CLI" ;;
             antigravity) configure_gh_skill "antigravity" "Antigravity CLI" ;;
