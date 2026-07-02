@@ -191,7 +191,7 @@ gh skill update gh                          # update
 gh skill list --agent claude-code          # verify
 ```
 
-There is no `gh skill uninstall`; to remove it, delete the `gh/` directory from that agent's skills folder (e.g. `~/.claude/skills/gh/`).
+There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent — e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list` to find the exact `path`).
 
 ## Adding New Commands
 

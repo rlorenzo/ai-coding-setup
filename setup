@@ -863,7 +863,7 @@ configure_gh_skill() {
 
     if [[ "$count" -gt 0 ]]; then
         echo -e "  ${DIM}gh agent skill already installed — checking for updates${NC}"
-        if gh skill update gh --agent "$agent_id"; then
+        if gh skill update gh; then
             print_success "Updated gh agent skill for ${display_name}"
         else
             print_warning "Failed to update gh agent skill for ${display_name}"
