@@ -383,7 +383,7 @@ install_commands() {
     echo -e "${BOLD}── ${display_name} ──${NC}"
     mkdir -p "$dest_dir"
 
-    local installed=0 updated=0 skipped=0 current=0
+    local installed=0 updated=0 skipped=0 current=0 pruned=0
 
     for entry in "${entries[@]}"; do
         local cmd_name src_file dest_file dest_entry
@@ -467,7 +467,54 @@ install_commands() {
         fi
     done
 
-    echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
+    # Prune our stale orphans: dest entries that carry our marker but no longer
+    # have a matching source (a command renamed or removed in the repo). The
+    # marker guarantees these were installed by us, but removal still asks first
+    # (default No) so an update run can't silently drop a command the user meant
+    # to keep, e.g. when they declined the renamed replacement's install prompt;
+    # --force prunes without asking. Unmarked (custom) files are never touched,
+    # and the early return above on an empty source dir keeps this from wiping a
+    # whole category.
+    local d f fname name found s pext
+    if [[ "$mode" == skill ]]; then
+        while IFS= read -r -d '' d; do
+            [[ -f "$d/SKILL.md" ]] || continue
+            name=$(basename "$d"); found=false
+            for s in "${entries[@]}"; do
+                [[ "$(basename "$s")" == "$name" ]] && { found=true; break; }
+            done
+            $found && continue
+            has_marker "$marker" "$d/SKILL.md" || continue
+            if ! $FORCE && ! prompt_yes_no "  Remove stale ${prefix}${name} (no longer in repo)?" n; then
+                print_info "Kept ${prefix}${name}"
+                continue
+            fi
+            rm -rf "$d"
+            print_success "Removed stale ${prefix}${name}"
+            ((++pruned))
+        done < <(find "$dest_dir" -mindepth 1 -maxdepth 1 -type d -print0)
+    else
+        pext="${mode#file:}"
+        while IFS= read -r -d '' f; do
+            fname=$(basename "$f"); name="${fname%."$pext"}"; found=false
+            for s in "${entries[@]}"; do
+                [[ "$(basename "$s")" == "$fname" ]] && { found=true; break; }
+            done
+            $found && continue
+            has_marker "$marker" "$f" || continue
+            if ! $FORCE && ! prompt_yes_no "  Remove stale ${prefix}${name} (no longer in repo)?" n; then
+                print_info "Kept ${prefix}${name}"
+                continue
+            fi
+            rm -f "$f"
+            print_success "Removed stale ${prefix}${name}"
+            ((++pruned))
+        done < <(find "$dest_dir" -maxdepth 1 -name "*.$pext" -print0)
+    fi
+
+    local prune_note=""
+    [[ $pruned -gt 0 ]] && prune_note=", $pruned removed"
+    echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped${prune_note}"
 }
 
 # ---- Claude Code settings configuration ------------------------------------
@@ -889,7 +936,7 @@ while [[ $# -gt 0 ]]; do
         -f|--force) FORCE=true; shift ;;
         -h|--help)
             echo "Usage: setup [-f|--force]"
-            echo "  -f, --force  Overwrite custom (non-managed) files"
+            echo "  -f, --force  Overwrite custom (non-managed) files and prune stale ones without prompting"
             exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -1023,15 +1070,11 @@ for tool in "${selected_tools[@]}"; do
         antigravity)
             echo ""
             echo -e "${BOLD}── Antigravity CLI ──${NC}"
-            if prompt_yes_no "  Setup Antigravity CLI?"; then
-                if agy plugin install "$PWD/.antigravity"; then
-                    print_success "Installed Antigravity CLI plugin"
-                    configure_mcp "antigravity" "Antigravity CLI" "agy"
-                else
-                    print_error "agy plugin install failed — see output above"
-                fi
+            if agy plugin install "$PWD/.antigravity"; then
+                print_success "Installed Antigravity CLI plugin"
+                configure_mcp "antigravity" "Antigravity CLI" "agy"
             else
-                print_info "Skipped Antigravity CLI plugin"
+                print_error "agy plugin install failed; see output above"
             fi
             ;;
     esac
