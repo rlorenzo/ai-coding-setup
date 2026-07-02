@@ -1059,15 +1059,11 @@ for tool in "${selected_tools[@]}"; do
         antigravity)
             echo ""
             echo -e "${BOLD}── Antigravity CLI ──${NC}"
-            if prompt_yes_no "  Setup Antigravity CLI?"; then
-                if agy plugin install "$PWD/.antigravity"; then
-                    print_success "Installed Antigravity CLI plugin"
-                    configure_mcp "antigravity" "Antigravity CLI" "agy"
-                else
-                    print_error "agy plugin install failed — see output above"
-                fi
+            if agy plugin install "$PWD/.antigravity"; then
+                print_success "Installed Antigravity CLI plugin"
+                configure_mcp "antigravity" "Antigravity CLI" "agy"
             else
-                print_info "Skipped Antigravity CLI plugin"
+                print_error "agy plugin install failed; see output above"
             fi
             ;;
     esac
