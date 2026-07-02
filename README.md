@@ -178,6 +178,25 @@ The setup script can configure [Model Context Protocol (MCP)](https://modelconte
 
 MCP servers are added via each tool's `mcp add` CLI command at user scope.
 
+## `gh` Agent Skill
+
+Beyond the commands in this repo, `setup` can install the [`gh` agent skill published by `cli/cli`](https://github.com/cli/cli#agent-skills) for each selected tool. This is an **upstream** skill from the GitHub CLI team that teaches an agent to drive `gh` well — structured JSON output, pagination, repo targeting, search vs. list, and `gh api` fallback. It is unrelated to the commands/skills this repo ships.
+
+For each agent you select, `setup` installs it when missing and updates it when already present:
+
+- Install — `gh skill install cli/cli gh --agent <id> --scope user`
+- Update — `gh skill update gh`
+
+This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature). To manage it yourself:
+
+```bash
+gh skill install cli/cli gh --agent claude-code --scope user   # install for one agent
+gh skill update gh                                             # update (all hosts where it's installed)
+gh skill list --agent claude-code                              # verify
+```
+
+There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent — e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
+
 ## Adding New Commands
 
 To add a command, create the appropriate file(s) for each tool you want to support:

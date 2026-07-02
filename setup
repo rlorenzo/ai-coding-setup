@@ -690,6 +690,72 @@ configure_copilot_settings() {
     echo -e "  ${DIM}No settings to configure${NC}"
 }
 
+# ---- gh agent skill installer ----------------------------------------------
+#
+# The cli/cli repo publishes an agent skill named `gh` that teaches coding
+# agents how to drive the GitHub CLI (structured output, pagination, repo
+# targeting, search vs list, gh api fallback). Offer to install it — or update
+# it if already present — for a selected agent. This is an upstream skill,
+# unrelated to the commands/skills this repo installs.
+
+# True when this gh is new enough to have the `gh skill` command (preview).
+gh_skill_available() {
+    gh skill --help &>/dev/null
+}
+
+# Map an internal tool name to its `gh skill --agent` identifier.
+gh_skill_agent_id() {
+    case "$1" in
+        claude)      echo "claude-code" ;;
+        gemini)      echo "gemini-cli" ;;
+        codex)       echo "codex" ;;
+        copilot)     echo "github-copilot" ;;
+        antigravity) echo "antigravity" ;;
+    esac
+}
+
+# Usage: configure_gh_skill <tool> <display_name>
+configure_gh_skill() {
+    local tool="$1" display_name="$2"
+    local agent_id
+    agent_id=$(gh_skill_agent_id "$tool")
+    [[ -z "$agent_id" ]] && return
+
+    echo ""
+    echo -e "${BOLD}── ${display_name} — gh agent skill ──${NC}"
+
+    # Already installed for this agent? (list is scoped by --agent)
+    local count
+    count=$(gh skill list --agent "$agent_id" --scope user --json skillName 2>/dev/null \
+        | jq -r '[.[] | select(.skillName == "gh")] | length' 2>/dev/null || echo 0)
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+
+    if [[ "$count" -gt 0 ]]; then
+        echo -e "  ${DIM}gh agent skill already installed — checking for updates${NC}"
+        if gh skill update gh; then
+            print_success "gh agent skill up to date"
+        else
+            print_warning "gh skill update failed — see output above"
+        fi
+        return
+    fi
+
+    echo ""
+    echo "  Install the upstream 'gh' agent skill from cli/cli?"
+    echo "  Teaches the agent to drive the GitHub CLI (structured output,"
+    echo "  pagination, repo targeting, search vs list, gh api fallback)."
+    echo ""
+    if prompt_yes_no "  Install gh agent skill?"; then
+        if gh skill install cli/cli gh --agent "$agent_id" --scope user; then
+            print_success "Installed gh agent skill for ${display_name}"
+        else
+            print_warning "Failed to install gh agent skill for ${display_name}"
+        fi
+    else
+        print_info "Skipped gh agent skill for ${display_name}"
+    fi
+}
+
 # ---- review loop script installer -----------------------------------------
 #
 # Symlinks executable scripts from bin/ to ~/.local/bin/ so they are on PATH.
@@ -971,6 +1037,23 @@ for tool in "${selected_tools[@]}"; do
             ;;
     esac
 done
+
+# ---- install the upstream `gh` agent skill ---------------------------------
+
+# cli/cli publishes a `gh` agent skill that teaches coding agents how to drive
+# the GitHub CLI. Offer it for each selected agent (install, or update if
+# already present). Requires a gh new enough to have `gh skill` (preview).
+if gh_skill_available; then
+    for tool in "${selected_tools[@]}"; do
+        case "$tool" in
+            claude)      configure_gh_skill "claude" "Claude Code" ;;
+            gemini)      configure_gh_skill "gemini" "Gemini CLI" ;;
+            codex)       configure_gh_skill "codex" "Codex CLI" ;;
+            copilot)     configure_gh_skill "copilot" "Copilot CLI" ;;
+            antigravity) configure_gh_skill "antigravity" "Antigravity CLI" ;;
+        esac
+    done
+fi
 
 # ---- install shared prompts ------------------------------------------------
 
