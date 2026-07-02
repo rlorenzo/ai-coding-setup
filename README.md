@@ -167,7 +167,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
-- On each run the script also prunes stale installs: any command it previously installed (identified by that same marker) that no longer exists in the repo is removed, so renamed or deleted commands clean themselves up. Your own unmarked commands are never touched.
+- On each run the script also offers to prune stale installs: any command it previously installed (identified by that same marker) that no longer exists in the repo can be removed, so renamed or deleted commands clean themselves up. It asks before each removal (default No, so nothing is dropped without your say-so), or pass `--force` to prune without prompting. Your own unmarked commands are never touched.
 
 ## MCP Server Configuration
 
