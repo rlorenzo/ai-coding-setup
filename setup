@@ -549,7 +549,13 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebSearch")' &>/dev/null; then
         feature_changes+=("websearch")
     fi
-    if ! echo "$settings" | jq -e '.attribution' &>/dev/null; then
+    # Offer the change when attribution is unset, or when a prior run set
+    # commit/pr blank before sessionUrl existed (migrate by adding sessionUrl).
+    if echo "$settings" | jq -e '
+        (.attribution == null)
+        or (.attribution.commit == "" and .attribution.pr == ""
+            and (.attribution | has("sessionUrl") | not))
+    ' &>/dev/null; then
         feature_changes+=("attribution")
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
@@ -591,7 +597,7 @@ configure_claude_settings() {
             case "$change" in
                 webfetch)    echo -e "  • ${BOLD}WebFetch${NC} — allow web page fetching without prompting" ;;
                 websearch)   echo -e "  • ${BOLD}WebSearch${NC} — allow web searches without prompting" ;;
-                attribution) echo -e "  • ${BOLD}attribution${NC} — disable commit/PR attribution tags" ;;
+                attribution) echo -e "  • ${BOLD}attribution${NC} — disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC} — enable agent teams" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC} — flicker-free fullscreen rendering" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC} — enable native PowerShell tool" ;;
@@ -603,7 +609,7 @@ configure_claude_settings() {
                 case "$change" in
                     webfetch)    updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebFetch"])') ;;
                     websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
-                    attribution) updated=$(echo "$updated" | jq '.attribution = {"commit": "", "pr": ""}') ;;
+                    attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
