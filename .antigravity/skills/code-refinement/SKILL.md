@@ -11,6 +11,6 @@ Check for opportunities to use established framework utilities, composables, or 
 
 Verify that the project's UI framework components and utility classes are used where appropriate instead of custom CSS or HTML elements. Flag any custom styling that duplicates what the framework already provides.
 
-Run the project's linting command and fix all reported errors and warnings. Avoid using lint-suppression comments (e.g., eslint-disable, noqa, @ts-ignore) to make the lint pass unless absolutely necessary, and only with a clear justification in the code.
+Run the project's linting command and fix all reported errors and warnings. Discover the command from package scripts, a Makefile, CI config, or pre-commit config; if the project has no linter, note that and move on. Avoid using lint-suppression comments (e.g., eslint-disable, noqa, @ts-ignore) to make the lint pass unless absolutely necessary, and only with a clear justification in the code.
 
-Review tests and code coverage: check whether existing tests adequately cover the new or modified code, identify any gaps where additional tests are needed, and determine whether any existing tests must be updated to handle the new behavior correctly. When finished, ensure everything is ready for a high-quality code review.
+Review tests and code coverage: check whether existing tests adequately cover the new or modified code, add tests for any gaps you find, and update any existing tests that must change to handle the new behavior correctly. When finished, ensure everything is ready for a high-quality code review.

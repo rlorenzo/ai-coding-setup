@@ -1,3 +1,8 @@
+---
+description: "Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review."
+argument-hint: "[PR_NUMBER]"
+---
+
 # Review PR Feedback Loop
 
 Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
@@ -86,6 +91,6 @@ while [ $SECONDS -lt $end ]; do
 done
 ```
 
-Timeout → tell user to re-run `/review-pr` and stop. Success → go back to step 2.
+Timeout → tell user to re-run this command and stop. Success → go back to step 2.
 
 Declare success when step 2 finds zero unresolved threads AND step 5 confirms a bot review on HEAD. Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.

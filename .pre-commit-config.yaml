@@ -19,6 +19,14 @@ repos:
 
   - repo: local
     hooks:
+      - id: generated-files-in-sync
+        name: Generated skills/prompts in sync
+        entry: tools/generate
+        args: ["--check"]
+        language: script
+        pass_filenames: false
+        files: ^(\.claude/commands/|\.codex/|\.copilot/|\.antigravity/skills/|prompts/|tools/generate)
+        stages: [pre-commit]
       - id: bats-unit-tests
         name: BATS unit tests
         entry: test/run

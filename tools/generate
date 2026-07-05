@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# Generates the per-tool skill files and shared prompt copies from the
+# canonical command sources in .claude/commands/.
+#
+#   .claude/commands/<name>.md  (YAML frontmatter + body)
+#       -> .codex/skills/<name>/SKILL.md        (name/description frontmatter + body)
+#       -> .copilot/skills/<name>/SKILL.md
+#       -> .antigravity/skills/<name>/SKILL.md
+#       -> prompts/<name>.md                    (body only, for the review loops)
+#
+# Usage:
+#   tools/generate           regenerate all derived files in place
+#   tools/generate --check   verify derived files are up to date; exit 1 and
+#                            list stale files without touching anything
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Commands that ship as Agent Skills for Codex/Copilot/Antigravity.
+# efficient-orchestration is intentionally absent: it relies on Task-tool
+# subagent delegation, a Claude Code feature.
+SKILL_COMMANDS=(code-refinement code-review commitmsg dependency-review review-pr)
+SKILL_DIRS=(.codex/skills .copilot/skills .antigravity/skills)
+
+# Commands whose bodies also drive the review loop scripts as shared prompts.
+PROMPT_COMMANDS=(code-refinement code-review)
+
+CHECK=false
+case "${1:-}" in
+    --check) CHECK=true ;;
+    "") ;;
+    *) echo "usage: tools/generate [--check]" >&2; exit 2 ;;
+esac
+
+fail=0
+
+# Print the frontmatter `description` value of a command file.
+# Succeeds with empty output when the key is absent (caller validates),
+# so a grep miss doesn't trip set -e/pipefail.
+get_description() {
+    sed -n '2,/^---$/p' "$1" | grep -m 1 '^description:' \
+        | sed "s/^description:[[:space:]]*//; s/^['\"]//; s/['\"]$//" || true
+}
+
+# Print the body of a command file: everything after the closing frontmatter
+# delimiter, with leading blank lines stripped.
+get_body() {
+    if [[ "$(head -1 "$1")" == "---" ]]; then
+        awk 'NR == 1 { next } !seen && /^---$/ { seen = 1; next } seen' "$1" \
+            | sed '/./,$!d'
+    else
+        cat "$1"
+    fi
+}
+
+# Write (or, with --check, verify) a derived file.
+emit() {
+    local dest="$1" content="$2"
+    if $CHECK; then
+        if [[ ! -f "$dest" ]] || [[ "$content" != "$(cat "$dest")" ]]; then
+            echo "stale: ${dest#"$ROOT"/} (run tools/generate)" >&2
+            fail=1
+        fi
+    else
+        mkdir -p "$(dirname "$dest")"
+        printf '%s\n' "$content" > "$dest"
+        echo "wrote ${dest#"$ROOT"/}"
+    fi
+}
+
+for name in "${SKILL_COMMANDS[@]}"; do
+    src="$ROOT/.claude/commands/$name.md"
+    [[ -f "$src" ]] || { echo "error: missing source $src" >&2; exit 1; }
+    desc=$(get_description "$src")
+    if [[ -z "$desc" ]]; then
+        echo "error: $src has no 'description' in its frontmatter" >&2
+        exit 1
+    fi
+    body=$(get_body "$src")
+    skill_content="---
+name: $name
+description: \"$desc\"
+---
+
+$body"
+    for dir in "${SKILL_DIRS[@]}"; do
+        emit "$ROOT/$dir/$name/SKILL.md" "$skill_content"
+    done
+done
+
+for name in "${PROMPT_COMMANDS[@]}"; do
+    src="$ROOT/.claude/commands/$name.md"
+    [[ -f "$src" ]] || { echo "error: missing source $src" >&2; exit 1; }
+    emit "$ROOT/prompts/$name.md" "$(get_body "$src")"
+done
+
+if $CHECK && [[ $fail -ne 0 ]]; then
+    exit 1
+fi
+$CHECK && echo "generated files are in sync"
+exit 0

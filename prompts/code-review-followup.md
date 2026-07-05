@@ -1,5 +1,15 @@
 # Code Review Follow-Up
 
-Review agent-code-review.md for developer feedback. The changes are made, or an explanation is provided in the document. Re-review the staged files, taking into account the developer's feedback when making any additional recommendations. Do not repeat recommendations that were addressed and explained as not being done at this time. The revised document should not contain any completed items.
+Re-review the currently staged changes in light of the developer's responses in `agent-code-review.md`. Each of your previous findings has either been implemented or answered with an explanation in that document.
 
-You MUST overwrite `agent-code-review.md` using the same structured report format as the initial review (Summary with finding counts, Findings section, etc.). If no High or Medium issues remain and no Low severity blockers, state in the Summary: **Verdict: good to go**.
+Constraints (same as the initial review):
+
+- You only read and analyze code — never modify any source files. `agent-code-review.md` is the only file you may write. Do not stage, commit, or push.
+- Review only staged changes, focusing on changed lines and minimal surrounding context.
+
+Rules:
+
+- Do not repeat findings that were addressed, or that the developer declined with a reasonable justification.
+- Remove completed items; report only new or still-unresolved findings.
+- Overwrite `agent-code-review.md` using the same structured report format as the initial review (Summary with finding counts, Findings section, etc.), with the iteration number provided in your instructions.
+- Apply the same severity definitions as the initial review. If no High or Medium issues remain and no Low severity blockers (a Low blocks only when it violates an explicit project rule), state in the Summary: **Verdict: good to go**.

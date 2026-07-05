@@ -1,3 +1,8 @@
+---
+description: "Propose a single git commit message for the currently staged changes."
+allowed-tools: Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git branch:*)
+---
+
 # Commit Message
 
 Propose a single git commit message for the currently staged changes.
@@ -6,7 +11,7 @@ Propose a single git commit message for the currently staged changes.
 
 Run these commands to understand the changes:
 
-- `git diff --staged` — the actual changes
+- `git diff --staged --stat` — the shape of the change; then `git diff --staged` (or per-file diffs) only for files whose purpose isn't clear from the stat
 - `git status -s` — staged file list
 - `git log -n 20 --oneline` — recent style and to avoid repetition
 - `git branch --show-current` — if it contains a ticket ID (e.g. ABC-123), prefix the subject line

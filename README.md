@@ -80,6 +80,17 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 - Copilot CLI: `/code-review`
 - Antigravity CLI: `/code-review`
 
+### /dependency-review
+
+Audit dependency updates for supply-chain risk before they land: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes.
+
+**Usage:**
+
+- Claude Code: `/dependency-review`
+- Codex CLI: `$dependency-review`
+- Copilot CLI: `/dependency-review`
+- Antigravity CLI: `/dependency-review`
+
 ### /efficient-orchestration
 
 Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across the 5-hour and weekly usage windows. Model names are pinned in one reference ladder inside the command; the rest is written relative to whatever tier you are on, so it reads correctly whether you run Fable, Opus, or Sonnet.
@@ -148,6 +159,8 @@ REVIEWER_AGENT=codex
 
 Supported agents: `claude`, `codex`, `copilot`, `antigravity`. Only the agents you actually have installed need to be referenced.
 
+Both loops write their working files (`agent-code-review.md`, `agent-review-summary.md`, `feedback-plan.md`, `plan-review-summary.md`) to the target project's root. Consider adding those names to that project's `.gitignore` (or your global gitignore) so an agent never commits them by accident.
+
 ### Shared prompts
 
 Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not interactive commands. They're listed here so you can audit or tweak the behavior:
@@ -163,7 +176,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 
 ## How It Works
 
-- Each AI tool has its own command format, so commands are maintained as separate source files per tool.
+- Each AI tool has its own command format, but the content is maintained once: `.claude/commands/*.md` files are the canonical sources, and `tools/generate` derives the Codex/Copilot/Antigravity `SKILL.md` files and the shared loop prompts from them. A pre-commit/CI check (`tools/generate --check`) fails if the derived files drift from their sources.
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
@@ -200,12 +213,11 @@ There is no `gh skill uninstall` command; to remove it, delete the installed `gh
 
 ## Adding New Commands
 
-To add a command, create the appropriate file(s) for each tool you want to support:
+Commands are authored once as Claude Code command files; everything else is generated:
 
-1. **Claude Code**: create `.claude/commands/command-name.md` (markdown with `$ARGUMENTS` placeholder)
-2. **Codex CLI**: create `.codex/skills/command-name/SKILL.md` (markdown with YAML front matter containing `name` and `description`)
-3. **Copilot CLI**: create `.copilot/skills/command-name/SKILL.md` (same format as Codex skills)
-4. **Antigravity CLI**: create `.antigravity/skills/command-name/SKILL.md` (same format as Codex/Copilot skills)
+1. Create `.claude/commands/command-name.md` — markdown with YAML front matter containing at least `description` (plus optional Claude-specific keys like `allowed-tools` or `argument-hint`), and an optional `$ARGUMENTS` placeholder in the body.
+2. If the command should also ship as a Codex/Copilot/Antigravity skill, add its name to `SKILL_COMMANDS` in `tools/generate` (or `PROMPT_COMMANDS` if the review loops need it as a shared prompt).
+3. Run `tools/generate` to produce the derived `SKILL.md` and prompt files, and commit them together with the source.
 
 Run `./setup` again to install.
 
@@ -239,7 +251,9 @@ git submodule update --init --recursive
 test/run
 ```
 
-Unit tests (`test/run`) cover config parsing, prompt loading, validation, and review status checks. They run in seconds and need no API keys.
+Unit tests (`test/run`) cover config parsing, prompt loading, validation, review status checks, and generated-file sync. They run in seconds and need no API keys.
+
+If you edit a command source in `.claude/commands/`, run `tools/generate` afterwards — the test suite and pre-commit both fail when the derived skill/prompt files are stale.
 
 ### Smoke Tests
 
