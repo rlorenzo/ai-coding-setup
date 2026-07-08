@@ -808,6 +808,61 @@ configure_gh_skill() {
     fi
 }
 
+# ---- Impeccable design skills ----------------------------------------------
+#
+# Impeccable (https://impeccable.style) is a third-party design skill set for
+# AI coding agents: a shared design vocabulary plus commands for typography,
+# color, motion, layout, polish, and AI-slop detection. It is unrelated to the
+# commands this repo ships. Its scriptable installer targets providers by name.
+
+# Map an internal tool name to its Impeccable `--providers` id.
+# Only tools Impeccable supports are mapped; Antigravity has no provider, so it
+# is omitted (returns empty) and skipped by the caller.
+impeccable_provider_id() {
+    case "$1" in
+        claude)  echo "claude" ;;
+        codex)   echo "codex" ;;
+        copilot) echo "github" ;;
+    esac
+}
+
+# Offer to install the Impeccable design skills for the selected agents.
+configure_impeccable_skills() {
+    # Build a de-duplicated, comma-separated provider list from selected tools.
+    local providers="" tool pid
+    for tool in "${selected_tools[@]}"; do
+        pid=$(impeccable_provider_id "$tool")
+        [[ -z "$pid" ]] && continue
+        [[ ",$providers," == *",$pid,"* ]] && continue
+        providers="${providers:+$providers,}$pid"
+    done
+    [[ -z "$providers" ]] && return
+
+    echo ""
+    echo -e "${BOLD}── Impeccable design skills ──${NC}"
+    echo ""
+    echo "  Install or update the Impeccable design skills (https://impeccable.style)?"
+    echo "  A shared design vocabulary and commands for your agent: typography,"
+    echo "  color, motion, layout, polish, and AI-slop detection."
+    echo "  Runs via npx (always the latest), so re-running refreshes an existing"
+    echo "  install and adds any newly-selected agents:"
+    echo "    npx impeccable install --providers=${providers} --scope=global"
+    echo ""
+    if prompt_yes_no "  Install/update Impeccable skills?" "n"; then
+        if ! command -v npx &>/dev/null; then
+            print_warning "npx not found; install Node.js to use Impeccable skills"
+            return
+        fi
+        if npx impeccable install --providers="$providers" --scope=global; then
+            print_success "Installed/updated Impeccable skills for: ${providers}"
+        else
+            print_warning "Impeccable install failed; see output above"
+        fi
+    else
+        print_info "Skipped Impeccable skills"
+    fi
+}
+
 # ---- review loop script installer -----------------------------------------
 #
 # Symlinks executable scripts from bin/ to ~/.local/bin/ so they are on PATH.
@@ -1101,6 +1156,12 @@ if gh_skill_available; then
         esac
     done
 fi
+
+# ---- offer the Impeccable design skills ------------------------------------
+
+# Impeccable (impeccable.style) is a third-party design skill set for agents.
+# Offer to install it once for whichever selected tools it supports.
+configure_impeccable_skills
 
 # ---- install shared prompts ------------------------------------------------
 
