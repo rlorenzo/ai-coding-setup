@@ -254,6 +254,7 @@ write_status "This may take several minutes..." "$DIM"
 review_prompt=$(read_prompt_file "$REVIEWER_INITIAL_PROMPT")
 review_task="$review_prompt
 
+This is review iteration 1.
 IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts."
 
 pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
@@ -334,6 +335,7 @@ Read it, evaluate each finding, implement valid fixes, and respond inline per th
     followup_prompt=$(read_prompt_file "$REVIEWER_FOLLOWUP_PROMPT")
     followup_task="$followup_prompt
 
+This is review iteration $((iteration + 1)).
 IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings."
 
     pre_snapshot="$TMPDIR_REVIEW/pre-review-cycle-$iteration.txt"

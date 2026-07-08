@@ -1,3 +1,7 @@
+---
+description: "Run this task with your current model orchestrating while cheaper subagents do the token-heavy research, coding, and testing."
+---
+
 # Efficient Orchestration
 
 Orchestrate this task on your current model; delegate token-heavy work to cheaper, faster subagents via the Task tool. Spend your model on complexity and judgment; delegate bounded, routine, and high-volume work.
@@ -51,7 +55,7 @@ Match the tier to task difficulty, not task type: don't push complex implementat
 
 For long unattended runs, auto-pause at the cap and resume when it clears:
 
-- When either window hits ~95%, finish the current wave, then schedule a wakeup for `min(3600, secondsUntilWindowClears)` seconds. If the window clears further out than 3600s, chain wakeups: re-schedule on each wake until it clears.
+- When either window hits ~95%, finish the current wave, then pause. If your harness has a scheduled-wakeup or timer primitive, schedule a wakeup for `min(3600, secondsUntilWindowClears)` seconds; if the window clears further out than 3600s, chain wakeups by re-scheduling on each wake until it clears. If no such primitive exists, do NOT busy-wait with `sleep` loops — instead write the wake prompt below to a handoff file (e.g. `orchestration-resume.md`), tell the user when the window clears and to relaunch with that file, and stop.
 - On resume, re-verify live usage with `ccusage`; don't trust elapsed wall-clock. A fresh `blocks` timestamp (vs. the previous block id) is the real signal the window rolled over.
 - Make the wake prompt self-contained: remaining work plan, the 95% rule, the exact usage command, the previous block id, the check-then-reschedule logic, and handoff packets for any subagents that resume.
 - Tell the user which window tripped, the observed %, the next check time, and the outstanding work.

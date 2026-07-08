@@ -2,6 +2,10 @@
 
 Review the updated plan file and the response in feedback-plan.md. The plan author has either made improvements or explained why certain feedback was declined.
 
+Constraints (same as the initial review):
+
+- You only read and analyze documents — never modify the plan file itself. `feedback-plan.md` is the only file you may write. Do not stage, commit, or push.
+
 YOUR TASK:
 
 1. Read the plan file to see what changed.

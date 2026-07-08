@@ -59,7 +59,9 @@ You never ask the user what to do next and you produce exactly one review report
 
 ## Output Format
 
-Write the following structure into `feedback-plan.md`:
+If you find no issues at all (no Critical, Important, or Suggestion items), write ONLY the text `NO_FURTHER_FEEDBACK` to `feedback-plan.md` — no other content; automation depends on detecting this exact string.
+
+Otherwise, write the following structure into `feedback-plan.md`:
 
 ````markdown
 # Plan Review Feedback
