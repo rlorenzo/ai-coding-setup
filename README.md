@@ -211,6 +211,27 @@ gh skill list --agent claude-code                              # verify
 
 There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent — e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
 
+## Impeccable Design Skills
+
+`setup` can also install [Impeccable](https://impeccable.style), a **third-party** design skill set for AI coding agents. It gives your agent a shared design vocabulary and commands (typography, color, motion, layout, polish, and AI-slop detection), with a build tailored to each harness. It is unrelated to the commands this repo ships.
+
+For the selected tools it supports (Claude Code, Codex CLI, Copilot CLI), `setup` offers to run one command covering them all:
+
+```bash
+npx impeccable install --providers=claude,codex,github --scope=global
+```
+
+Because it runs via `npx` (always the latest) with explicit `--providers`/`--scope`, re-running `setup` and accepting this step refreshes an existing install and adds any newly-selected agents. There is no separate detect-and-update branch (unlike the `gh` skill above), since `install` with explicit providers is already idempotent and provider-aware.
+
+Antigravity CLI has no Impeccable provider, so it is skipped. This step needs `npx` (Node.js). To manage Impeccable yourself:
+
+```bash
+npx impeccable install --providers=claude --scope=global   # install for one provider
+npx impeccable update                                       # update
+```
+
+See [impeccable.style](https://impeccable.style) for the full command list and the Claude Code plugin install (`/plugin marketplace add pbakaus/impeccable`).
+
 ## Adding New Commands
 
 Commands are authored once as Claude Code command files; everything else is generated:
