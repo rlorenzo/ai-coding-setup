@@ -162,11 +162,14 @@ $prompt"
 
 # Run Antigravity CLI with a prompt in non-interactive headless mode.
 # Uses --dangerously-skip-permissions for auto-approval (equivalent to Codex --full-auto).
-# Pipes via stdin for reliability with long prompts.
+# The prompt MUST be piped via stdin without -p: since agy 1.1.1, passing any
+# -p value disables stdin reading, and whitespace-only -p values are rejected
+# as an empty prompt. A piped stdin prompt alone still enters print mode.
+# --print-timeout raises the 5m print-mode default; reviews can run longer.
 #   $1 — prompt text
 run_antigravity() {
     local prompt="$1"
-    echo "$prompt" | agy -p " " --dangerously-skip-permissions --add-dir "$PWD"
+    printf '%s' "$prompt" | agy --dangerously-skip-permissions --add-dir "$PWD" --print-timeout 30m
 }
 
 # Run Copilot CLI with a prompt in non-interactive autonomous mode.
