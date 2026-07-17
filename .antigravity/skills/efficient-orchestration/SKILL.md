@@ -1,4 +1,5 @@
 ---
+name: efficient-orchestration
 description: "Run this task with your current model orchestrating while cheaper subagents do the token-heavy research, coding, and testing."
 ---
 

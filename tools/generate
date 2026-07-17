@@ -18,9 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Commands that ship as Agent Skills for Codex/Copilot/Antigravity.
-# efficient-orchestration is intentionally absent: it relies on Task-tool
-# subagent delegation, a Claude Code feature.
-SKILL_COMMANDS=(code-refinement code-review commitmsg dependency-review review-pr)
+SKILL_COMMANDS=(code-refinement code-review commitmsg dependency-review efficient-orchestration review-pr)
 SKILL_DIRS=(.codex/skills .copilot/skills .antigravity/skills)
 
 # Commands whose bodies also drive the review loop scripts as shared prompts.

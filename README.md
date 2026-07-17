@@ -93,13 +93,14 @@ Audit dependency updates for supply-chain risk before they land: publish-age gat
 
 ### /efficient-orchestration
 
-Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across the 5-hour and weekly usage windows. Model names are pinned in one reference ladder inside the command; the rest is written relative to whatever tier you are on, so it reads correctly whether you run Fable, Opus, or Sonnet.
-
-Relies on Task-tool subagent delegation, a Claude Code feature, so it's installed for Claude Code only.
+Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across usage windows. No model names are hardcoded beyond a Claude example ladder: each harness orders its own available models by cost and capability, and everything else is written relative to whatever tier you are on. Agents without a native subagent tool (Codex, Copilot) delegate by spawning their own CLI non-interactively with an explicit model.
 
 **Usage:**
 
 - Claude Code: `/efficient-orchestration`
+- Codex CLI: `$efficient-orchestration`
+- Copilot CLI: `/efficient-orchestration`
+- Antigravity CLI: `/efficient-orchestration`
 
 ## Review Loops
 
