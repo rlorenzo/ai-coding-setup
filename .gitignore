@@ -6,3 +6,7 @@ agent-code-review.md
 agent-review-summary.md
 feedback-plan.md
 plan-review-summary.md
+
+# Impeccable hook installer artifacts (machine-specific absolute paths)
+.claude/settings.local.json
+.codex/hooks.json

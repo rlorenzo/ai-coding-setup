@@ -848,7 +848,7 @@ configure_impeccable_skills() {
     echo "  install and adds any newly-selected agents:"
     echo "    npx impeccable install --providers=${providers} --scope=global"
     echo ""
-    if prompt_yes_no "  Install/update Impeccable skills?" "n"; then
+    if prompt_yes_no "  Install/update Impeccable skills?"; then
         if ! command -v npx &>/dev/null; then
             print_warning "npx not found; install Node.js to use Impeccable skills"
             return
