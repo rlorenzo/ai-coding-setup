@@ -4,13 +4,37 @@ Set of prompts, skills, and scripts to aid in utilizing AI coding agents in deve
 
 ## Prerequisites
 
+The `setup` script and the review loops are Bash scripts that shell out to a handful of command-line tools. Install the ones below and make sure they are on your `PATH`.
+
+**Required** (the `setup` script exits early if any is missing):
+
+- [`git`](https://git-scm.com/), to clone the repo and drive the `git`-based commands
 - [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+, installed and authenticated (`/review-pr` uses `gh pr edit --add-reviewer` to reliably re-request reviews from existing bot reviewers)
-- [Node.js (`npx`)](https://nodejs.org/), required for MCP servers
-- At least one of the following AI coding tools:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-  - [Codex CLI](https://github.com/openai/codex)
-  - [Copilot CLI](https://docs.github.com/en/copilot/copilot-cli)
-  - Antigravity CLI (using the `agy` command)
+- [`jq`](https://jqlang.github.io/jq/), a JSON processor used to read and edit each tool's settings and MCP config files
+
+**Required only for optional steps:**
+
+- [Node.js (`npx`)](https://nodejs.org/), for the MCP servers and the Impeccable design skills. `setup` skips those steps with a warning if `npx` is not found.
+
+**At least one AI coding tool:**
+
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- [Codex CLI](https://github.com/openai/codex)
+- [Copilot CLI](https://docs.github.com/en/copilot/copilot-cli)
+- Antigravity CLI (using the `agy` command)
+
+### Installing the prerequisites
+
+| Tool | macOS (Homebrew) | Debian / Ubuntu | Windows (winget) |
+| --- | --- | --- | --- |
+| `git` | `brew install git` | `sudo apt install git` | bundled with [Git for Windows](https://git-scm.com/downloads/win) |
+| `gh` | `brew install gh` | [gh install docs](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) | `winget install GitHub.cli` |
+| `jq` | `brew install jq` | `sudo apt install jq` | `winget install jqlang.jq` |
+| Node.js | `brew install node` | `sudo apt install nodejs npm` | `winget install OpenJS.NodeJS` |
+
+The other utilities the scripts call (`bash`, `grep`, `sed`, `awk`, `sort`, `diff`, `find`, `comm`, ...) are standard on macOS and Linux, and are bundled with Git for Windows.
+
+> **Windows:** Run `./setup` and the review loops from [Git Bash](https://git-scm.com/downloads/win) (part of Git for Windows). Git Bash ships Bash and the standard Unix utilities but **not `jq`**, so install `jq` separately with the command above.
 
 ## Quick Start
 
