@@ -113,8 +113,10 @@ has_marker() {
 is_up_to_date() {
     local src="$1" dest="$2" marker="$3"
     local expected
-    expected=$(cat "$src")
-    has_marker "$marker" "$src" || expected=$(printf '%s\n%s\n' "$expected" "$marker")
+    # Reproduce the exact bytes the installer writes (cp + marker append) so
+    # the comparison can't drift from the install path; command substitution
+    # strips trailing newlines from both sides equally.
+    expected=$(cat "$src"; has_marker "$marker" "$src" || printf '\n%s\n' "$marker")
     [[ "$expected" == "$(cat "$dest")" ]]
 }
 
