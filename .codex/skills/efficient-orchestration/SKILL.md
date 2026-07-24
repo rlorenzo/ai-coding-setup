@@ -38,6 +38,8 @@ Pick the tier by task difficulty, not task type, and don't exceed your own tier 
 
 Match the tier to task difficulty, not task type: don't push complex implementation down to a mid tier just because it's "implementation."
 
+Pin the tier explicitly on every spawn, and use model aliases (`haiku`, `sonnet`, `opus`) rather than full model IDs — aliases track model rotations and survive access changes; pinned IDs hard-fail when a model is rotated out. Don't assume built-in subagents are cheap: since Claude Code v2.1.198 the built-in Explore, Plan, and general-purpose agents inherit the main-session model (Explore is capped at Opus on the Claude API), so an un-pinned background search bills at your tier. A per-invocation model overrides the agent definition, and a user-level agent file named `Explore` with `model: haiku` shadows the built-in for the spontaneous searches you don't route. If the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — on current-generation models, low effort roughly matches the previous generation's highest setting.
+
 ## Pattern
 
 1. Name the token risk: big search, long logs, broad docs, or repetitive edits.
@@ -48,6 +50,7 @@ Match the tier to task difficulty, not task type: don't push complex implementat
 
 ## Stay within usage limits
 
+- Know what delegation buys on your billing model. On pay-per-token APIs, cheaper tiers cut real dollars. On subscriptions, most session cost is context reprocessing (cache reads/writes), and every subagent rebuilds context whose findings then flow back into yours — so total tokens can go *up* even as the quota that binds goes down. The durable subscription wins are bucket arbitrage (e.g. Claude's separate Sonnet-only weekly allowance on top of the shared all-models bucket, which the frontier tier drains fastest), parallel wall-clock, and keeping your own context lean.
 - Delegate in bounded waves: cap parallel subagents (~3 by default), let each wave finish before launching the next, and check usage between waves, not continuously.
 - Check real usage with your harness's usage surface — on Claude Code, `npx -y ccusage@latest blocks --active --json`; elsewhere, a usage/status command if one exists. If there is none, keep waves small and treat the first rate-limit error as the cap. Stop launching new work once any usage window (e.g. Claude's 5-hour or weekly) nears ~95% of its cap.
 - Don't kill in-flight subagents to claw back marginal budget; let running work finish.
@@ -73,9 +76,13 @@ Stop and report instead of improvising when: live code contradicts the handoff; 
 
 Reports are leads, not facts. Before acting on a high-impact finding, opening a PR, or claiming done: reopen key cited files, confirm line refs and failures, and review the final diff. Resolve subagent disagreements at the orchestration layer.
 
+For non-trivial completed work, prefer independent refutation over self-review: spawn a fresh-context verifier on your own tier whose only job is to refute the claim — rerun the tests, drive the affected flow, probe edge cases — and that never fixes anything itself. Fresh-context verifiers catch what the implementer (including you) is primed to miss.
+
 ## Guardrails
 
 - Don't delegate a blocker your next step needs.
 - Don't let two subagents edit the same files at once.
+- Don't keep implementing slices yourself while workers own them; paying for coordination *and* duplicated implementation costs more than either alone.
+- Route security-sensitive work (authn/authz, secrets, crypto, hardening) to a capable non-frontier tier: frontier-model safety classifiers can refuse benign defensive-security work mid-task.
 - Don't trust high-risk conclusions blindly; check the evidence yourself.
 - The pattern pays off only when work parallelizes; if a task is tiny or validation needs delicate judgment, keep it on your own model.
