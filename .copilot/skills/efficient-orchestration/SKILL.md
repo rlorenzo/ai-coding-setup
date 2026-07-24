@@ -38,6 +38,8 @@ Pick the tier by task difficulty, not task type, and don't exceed your own tier 
 
 Match the tier to task difficulty, not task type: don't push complex implementation down to a mid tier just because it's "implementation."
 
+Start each delegation at the cheapest tier that can plausibly succeed; after two failed attempts at a tier, escalate one tier or take the work back yourself — never retry the same tier a third time.
+
 Pin the tier explicitly on every spawn, and use model aliases (`haiku`, `sonnet`, `opus`) rather than full model IDs — aliases track model rotations and survive access changes; pinned IDs hard-fail when a model is rotated out. Don't assume built-in subagents are cheap: since Claude Code v2.1.198 the built-in Explore, Plan, and general-purpose agents inherit the main-session model (Explore is capped at Opus on the Claude API), so an un-pinned background search bills at your tier. A per-invocation model overrides the agent definition, and a user-level agent file named `Explore` with `model: haiku` shadows the built-in for the spontaneous searches you don't route. If the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — on current-generation models, low effort roughly matches the previous generation's highest setting.
 
 ## Pattern
@@ -82,6 +84,7 @@ For non-trivial completed work, prefer independent refutation over self-review: 
 
 - Don't delegate a blocker your next step needs.
 - Don't let two subagents edit the same files at once.
+- Where the harness supports per-agent tool allowlists, enforce read-only roles (recon, review, verification) by capability — grant only read/search tools — rather than relying on prompt text to keep them from editing.
 - Don't keep implementing slices yourself while workers own them; paying for coordination *and* duplicated implementation costs more than either alone.
 - Route security-sensitive work (authn/authz, secrets, crypto, hardening) to a capable non-frontier tier: frontier-model safety classifiers can refuse benign defensive-security work mid-task.
 - Don't trust high-risk conclusions blindly; check the evidence yourself.
