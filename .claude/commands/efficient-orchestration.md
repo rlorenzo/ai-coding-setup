@@ -4,87 +4,54 @@ description: "Run this task with your current model orchestrating while cheaper 
 
 # Efficient Orchestration
 
-Orchestrate this task on your current model; delegate token-heavy work to cheaper, faster subagents. Use your harness's subagent mechanism if it has one (e.g. Claude Code's Task tool, Antigravity subagents); otherwise spawn your own CLI non-interactively per slice with an explicit model (e.g. `codex exec -m <model> "<handoff>"`). Spend your model on complexity and judgment; delegate bounded, routine, and high-volume work.
+Orchestrate this task on your current model; delegate token-heavy work to cheaper, faster subagents. Use your harness's subagent mechanism if it has one (e.g. Claude Code's Task tool, Antigravity subagents); otherwise spawn your own CLI non-interactively per slice with an explicit model (e.g. `codex exec -m <model> "<handoff>"`).
 
-## Model tiers
+## Tiers
 
-Build the ladder from the models your harness can run, ordered cheapest to most capable. On Claude models it is `Haiku < Sonnet < Opus < Fable`; on other harnesses, list what is available (a models command or settings panel) and order it by cost and capability the same way.
+Order the models your harness can run from cheapest to most capable (on Claude: `Haiku < Sonnet < Opus < Fable`). You orchestrate from your tier and delegate *down* the ladder; never spend a higher tier than the work justifies.
 
-You are the orchestrator, running on one of these tiers. Delegate *down* the ladder: when you spawn a subagent, pass the model id for the tier the work needs, and never spend a higher tier than the task justifies. No model names are pinned beyond the example above; everything below is written relative to "your tier."
+## Split the work
 
-## Your own token discipline
+**Keep on your model:** decomposition, architecture/risk tradeoffs, complex implementation (intricate refactors, multi-file features, subtle bugs), resolving conflicting reports, integration and final review, and any blocker your next step depends on.
 
-- Search and size-check before reading; read by range or signature, never dump whole files or logs.
-- Use Bash (`grep`/`sed`/`awk`/`jq`/`head`) for inspection, large files, and mechanical transforms instead of loading them into context; keep Read+Edit for code changes that need review.
-- Batch independent searches in parallel: one message, multiple tool calls.
-- Report findings as summaries with `file:line` refs, not raw dumps.
+**Delegate:** repo scans and search, docs/prior-art extraction, test and browser passes, log reduction, failure clustering, narrow theory-specific debugging, and bounded patches or mechanical edits with clear file ownership.
 
-## Keep on your model
+**Your own token discipline:** search and size-check before reading; read by range, never dump whole files or logs; use `grep`/`sed`/`awk`/`jq`/`head` for inspection and mechanical transforms; batch independent searches in one message; report findings as summaries with `file:line` refs.
 
-Decomposition, architecture/risk tradeoffs, complex implementation (intricate refactors, multi-file features, subtle bugs), resolving conflicting reports, integrating results, final review and synthesis, and any blocker your next step depends on.
+## Pick each subagent's model
 
-## Delegate
+By task difficulty, not task type — and never above your own tier:
 
-Repo scans, inventory, search; docs/prior-art extraction; browser/test passes, screenshots, log reduction; test-failure clustering; narrow theory-specific debugging; bounded patches and mechanical edits with clear file ownership.
+- **Cheapest tier:** mechanical, high-volume, low-judgment work — search sweeps, inventory, log reduction, simple edits.
+- **Mid tier (default):** focused research, routine or narrow patches, test runs, straightforward debugging.
+- **Your tier:** complex work delegated for parallelism or context isolation, not savings — intricate refactors, multi-file features, subtle bugs, design exploration.
 
-## Model per subagent
+Start at the cheapest tier that can plausibly succeed; after two failures at a tier, escalate one tier or take the work back — never a third retry at the same tier.
 
-Pick the tier by task difficulty, not task type, and don't exceed your own tier for cost savings:
+Pin an explicit model alias (`haiku`, `sonnet`, `opus`) on every spawn — aliases survive model rotations; pinned full IDs hard-fail. Built-ins aren't cheap by default: since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose agents inherit the main-session model (Explore Opus-capped on the Claude API). A per-invocation model overrides that, and a user-level `Explore` agent with `model: haiku` catches the spontaneous searches you don't route. Where the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — current-generation low roughly matches previous-generation highest.
 
-- **Cheapest tier** (bottom of the ladder): mechanical, high-volume, low-judgment work such as search sweeps, inventory, log reduction, simple edits.
-- **A mid tier** (a good default): low-to-medium complexity such as focused research, routine or narrow patches, test runs, straightforward debugging.
-- **Your own tier** (or an equal-tier isolated subagent), worth parallelizing or isolating from your context rather than for cost savings: intricate refactors, multi-file features, subtle bugs, design exploration, high-stakes reasoning.
-
-Match the tier to task difficulty, not task type: don't push complex implementation down to a mid tier just because it's "implementation."
-
-Start each delegation at the cheapest tier that can plausibly succeed; after two failed attempts at a tier, escalate one tier or take the work back yourself — never retry the same tier a third time.
-
-Pin the tier explicitly on every spawn, and use model aliases (`haiku`, `sonnet`, `opus`) rather than full model IDs — aliases track model rotations and survive access changes; pinned IDs hard-fail when a model is rotated out. Don't assume built-in subagents are cheap: since Claude Code v2.1.198 the built-in Explore, Plan, and general-purpose agents inherit the main-session model (Explore is capped at Opus on the Claude API), so an un-pinned background search bills at your tier. A per-invocation model overrides the agent definition, and a user-level agent file named `Explore` with `model: haiku` shadows the built-in for the spontaneous searches you don't route. If the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — on current-generation models, low effort roughly matches the previous generation's highest setting.
-
-## Pattern
+## Run it
 
 1. Name the token risk: big search, long logs, broad docs, or repetitive edits.
-2. Split independent slices into parallel subagents before reading everything yourself; keep coupled or blocking work local.
-3. Give each subagent clear ownership, bounded scope, and verification gates.
-4. Require compact returns: findings, `file:line` refs, commands run, diffs, residual risk, stop conditions hit, and what you must decide.
+2. Split independent slices into parallel subagents; keep coupled or blocking work local.
+3. Write each handoff as if the subagent has no chat context: repo path, exact objective, in/out-of-scope files, verification commands, success criteria, and the return format (findings, `file:line` refs, commands run, diffs, failures, uncertainty).
+4. Tell subagents to stop and report instead of improvising when live code contradicts the handoff, a verification command fails twice after a fix, the work needs out-of-scope files, or a claim lacks concrete evidence.
 5. Decide at the orchestration layer: compare, resolve conflicts, choose the path, review the final diff.
 
-## Stay within usage limits
+## Usage limits
 
-- Know what delegation buys on your billing model. On pay-per-token APIs, cheaper tiers cut real dollars. On subscriptions, most session cost is context reprocessing (cache reads/writes), and every subagent rebuilds context whose findings then flow back into yours — so total tokens can go *up* even as the quota that binds goes down. The durable subscription wins are bucket arbitrage (e.g. Claude's separate Sonnet-only weekly allowance on top of the shared all-models bucket, which the frontier tier drains fastest), parallel wall-clock, and keeping your own context lean.
-- Delegate in bounded waves: cap parallel subagents (~3 by default), let each wave finish before launching the next, and check usage between waves, not continuously.
-- Check real usage with your harness's usage surface — on Claude Code, `npx -y ccusage@latest blocks --active --json`; elsewhere, a usage/status command if one exists. If there is none, keep waves small and treat the first rate-limit error as the cap. Stop launching new work once any usage window (e.g. Claude's 5-hour or weekly) nears ~95% of its cap.
-- Don't kill in-flight subagents to claw back marginal budget; let running work finish.
-
-## Pause & resume across windows
-
-For long unattended runs, auto-pause at the cap and resume when it clears:
-
-- When a usage window hits ~95%, finish the current wave, then pause. If your harness has a scheduled-wakeup or timer primitive, schedule a wakeup for `min(3600, secondsUntilWindowClears)` seconds; if the window clears further out than 3600s, chain wakeups by re-scheduling on each wake until it clears. If no such primitive exists, do NOT busy-wait with `sleep` loops — instead write the wake prompt below to a handoff file (e.g. `orchestration-resume.md`), tell the user when the window clears and to relaunch with that file, and stop.
-- On resume, re-verify live usage with the same usage command; don't trust elapsed wall-clock. On Claude Code, a fresh `ccusage blocks` timestamp (vs. the previous block id) is the real signal the window rolled over.
-- Make the wake prompt self-contained: remaining work plan, the 95% rule, the exact usage command and its last reading, the check-then-reschedule logic, and handoff packets for any subagents that resume.
-- Tell the user which window tripped, the observed %, the next check time, and the outstanding work.
-
-## Handoff packets
-
-Write each prompt as if the subagent has no chat context: repo path, exact objective, in/out-of-scope files, return format (files, line refs, commands, diffs, failures, uncertainty), and verification commands plus what success looks like.
-
-## Subagent stop conditions
-
-Stop and report instead of improvising when: live code contradicts the handoff; a verification command fails twice after a fix; the work needs out-of-scope files; or there's no concrete evidence for a claim.
+- Know what delegation buys. On pay-per-token APIs, cheaper tiers cut real dollars. On subscriptions, most cost is context reprocessing, and each subagent rebuilds context whose findings flow back into yours — total tokens can rise while the binding quota falls. The durable wins are bucket arbitrage (e.g. Claude's separate Sonnet-only weekly allowance, while the frontier tier drains the shared bucket fastest), wall-clock parallelism, and a lean main context.
+- Delegate in bounded waves (~3 parallel); between waves check the harness's usage surface (Claude Code: `npx -y ccusage@latest blocks --active --json`; otherwise treat the first rate-limit error as the cap). Stop launching once any usage window nears ~95%; let in-flight work finish.
+- For long unattended runs, pause at the cap and resume when it clears: finish the wave, then use the harness's scheduled-wakeup primitive, chaining wakeups of ≤3600s until the window clears — never busy-wait with `sleep`. If no such primitive exists, write a self-contained resume prompt to a handoff file (remaining plan, the 95% rule, the exact usage command and its last reading, subagent handoffs) and tell the user to relaunch with it. On resume, re-verify with the usage command — a fresh block timestamp, not elapsed wall-clock, proves rollover. Tell the user which window tripped, the observed %, the next check time, and the outstanding work.
 
 ## Vet results
 
-Reports are leads, not facts. Before acting on a high-impact finding, opening a PR, or claiming done: reopen key cited files, confirm line refs and failures, and review the final diff. Resolve subagent disagreements at the orchestration layer.
-
-For non-trivial completed work, prefer independent refutation over self-review: spawn a fresh-context verifier on your own tier whose only job is to refute the claim — rerun the tests, drive the affected flow, probe edge cases — and that never fixes anything itself. Fresh-context verifiers catch what the implementer (including you) is primed to miss.
+Reports are leads, not facts. Before acting on a high-impact finding, opening a PR, or claiming done: reopen key cited files, confirm line refs and failures, review the final diff, and resolve subagent disagreements yourself. For non-trivial completed work, spawn a fresh-context verifier on your tier that only tries to refute the claim — rerun the tests, drive the affected flow, probe edge cases — and never fixes anything; independent refutation beats self-review.
 
 ## Guardrails
 
 - Don't delegate a blocker your next step needs.
-- Don't let two subagents edit the same files at once.
-- Where the harness supports per-agent tool allowlists, enforce read-only roles (recon, review, verification) by capability — grant only read/search tools — rather than relying on prompt text to keep them from editing.
-- Don't keep implementing slices yourself while workers own them; paying for coordination *and* duplicated implementation costs more than either alone.
-- Route security-sensitive work (authn/authz, secrets, crypto, hardening) to a capable non-frontier tier: frontier-model safety classifiers can refuse benign defensive-security work mid-task.
-- Don't trust high-risk conclusions blindly; check the evidence yourself.
-- The pattern pays off only when work parallelizes; if a task is tiny or validation needs delicate judgment, keep it on your own model.
+- Don't let two subagents edit the same files, and don't implement slices workers own — coordination plus duplicated implementation costs more than either alone.
+- Enforce read-only roles (recon, review, verification) by tool allowlist where the harness supports it, not prompt text.
+- Route security-sensitive work (authn/authz, secrets, crypto, hardening) to a capable non-frontier tier — frontier safety classifiers can refuse benign defensive work mid-task.
+- If the task is tiny, doesn't parallelize, or needs delicate judgment throughout, skip the ceremony and do it yourself.
