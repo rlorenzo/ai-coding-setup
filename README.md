@@ -53,6 +53,7 @@ The script detects which AI tools you have installed and walks you through insta
 | Tool | Command format | Source directory | Installs to |
 | --- | --- | --- | --- |
 | Claude Code | Markdown (`.md`) | `.claude/commands/` | `~/.claude/commands/` |
+| Claude Code agents | Markdown (`.md`) | `.claude/agents/` | `~/.claude/agents/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
 | Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Antigravity CLI | Unified Plugin (`plugin.json`) | `.antigravity/` | `~/.gemini/antigravity-cli/plugins/ai-coding-setup/` |
@@ -127,6 +128,16 @@ The skill also pins the model explicitly on every spawn (since Claude Code v2.1.
 - Codex CLI: `$efficient-orchestration`
 - Copilot CLI: `/efficient-orchestration`
 - Antigravity CLI: `/efficient-orchestration`
+
+## Claude Code Agents
+
+Beyond commands, `setup` installs user-level subagent definitions from [.claude/agents/](.claude/agents/) to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
+
+### Explore
+
+Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in — a user-level agent with the same name overrides it, which the docs explicitly support — and pins exploration back to `haiku` at `effort: low` with read-only tools.
+
+Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. To remove it, delete `~/.claude/agents/Explore.md`.
 
 ## Review Loops
 
@@ -273,7 +284,7 @@ Run `./setup` again to install.
 
 Delete the command/skill from the corresponding directory (or uninstall the plugin for Antigravity):
 
-- Claude: `~/.claude/commands/`
+- Claude: `~/.claude/commands/` (agents: `~/.claude/agents/`)
 - Codex: `~/.codex/skills/`
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
