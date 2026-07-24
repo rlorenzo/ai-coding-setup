@@ -113,8 +113,10 @@ has_marker() {
 is_up_to_date() {
     local src="$1" dest="$2" marker="$3"
     local expected
-    expected=$(cat "$src")
-    has_marker "$marker" "$src" || expected=$(printf '%s\n%s\n' "$expected" "$marker")
+    # Reproduce the exact bytes the installer writes (cp + marker append) so
+    # the comparison can't drift from the install path; command substitution
+    # strips trailing newlines from both sides equally.
+    expected=$(cat "$src"; has_marker "$marker" "$src" || printf '\n%s\n' "$marker")
     [[ "$expected" == "$(cat "$dest")" ]]
 }
 
@@ -1111,6 +1113,9 @@ for tool in "${selected_tools[@]}"; do
             install_commands "Claude Code" \
                 ".claude/commands" "$HOME/.claude/commands" \
                 "file:md" "$MD_MARKER" "/" "get_md_description"
+            install_commands "Claude Code Agents" \
+                ".claude/agents" "$HOME/.claude/agents" \
+                "file:md" "$MD_MARKER" "" "get_md_description"
             configure_claude_settings
             configure_mcp "claude" "Claude Code" "claude"
             ;;
