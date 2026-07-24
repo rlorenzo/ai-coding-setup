@@ -28,7 +28,7 @@ By task difficulty, not task type — and never above your own tier:
 
 Start at the cheapest tier that can plausibly succeed; after two failures at a tier, escalate one tier or take the work back — never a third retry at the same tier.
 
-Pin an explicit model alias (`haiku`, `sonnet`, `opus`) on every spawn — aliases survive model rotations; pinned full IDs hard-fail. Built-ins aren't cheap by default: since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose agents inherit the main-session model (Explore Opus-capped on the Claude API). A per-invocation model overrides that, and a user-level `Explore` agent with `model: haiku` catches the spontaneous searches you don't route. Where the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — current-generation low roughly matches previous-generation highest.
+Pin an explicit model alias (e.g. `haiku`, `sonnet`, `opus`) on every spawn — aliases survive model rotations; pinned full IDs hard-fail. Don't assume built-in subagents are cheap: some harnesses default them to inheriting your main-session model (Claude Code's built-in Explore/Plan/general-purpose do; a per-invocation model overrides it, and a user-level `Explore` agent with `model: haiku` catches the spontaneous searches you don't route). Where the harness supports per-agent reasoning effort, run cheap-tier recon and mechanical work at low effort — current-generation low roughly matches previous-generation highest.
 
 ## Run it
 
