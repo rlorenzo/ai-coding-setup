@@ -10,7 +10,7 @@ load test_helper
 
 @test "validate_agent_name accepts all valid agents" {
     source_lib
-    for agent in claude codex copilot antigravity; do
+    for agent in claude codex copilot antigravity kimi; do
         run validate_agent_name "$agent" "--editor"
         assert_success
     done

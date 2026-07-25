@@ -4,8 +4,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # ai-coding-setup installer
 # Installs AI coding agent commands/skills for Claude Code, Codex CLI,
-# Copilot CLI, and Antigravity CLI from this repo into user-level
-# directories.
+# Copilot CLI, Antigravity CLI, and Kimi Code CLI from this repo into
+# user-level directories.
 # ---------------------------------------------------------------------------
 
 RED='\033[0;31m'
@@ -110,6 +110,12 @@ has_marker() {
     grep -qF "$1" "$2" 2>/dev/null
 }
 
+# Kimi Code keeps its user-level data (skills, mcp.json, config.toml) under
+# ~/.kimi-code, overridable with KIMI_CODE_HOME.
+kimi_home() {
+    echo "${KIMI_CODE_HOME:-$HOME/.kimi-code}"
+}
+
 is_up_to_date() {
     local src="$1" dest="$2" marker="$3"
     local expected
@@ -181,6 +187,10 @@ is_mcp_configured() {
             [[ -f "$HOME/.gemini/antigravity-cli/mcp_config.json" ]] \
                 && jq -e --arg n "$name" '.mcpServers[$n]' "$HOME/.gemini/antigravity-cli/mcp_config.json" &>/dev/null
             ;;
+        kimi)
+            [[ -f "$(kimi_home)/mcp.json" ]] \
+                && jq -e --arg n "$name" '.mcpServers[$n]' "$(kimi_home)/mcp.json" &>/dev/null
+            ;;
     esac
 }
 
@@ -217,11 +227,26 @@ add_mcp_server() {
                 '.mcpServers[$n] = {"command":$c,"args":$a}' "$config")
             echo "$updated" | jq . > "$config"
             ;;
+        kimi)
+            # Kimi has no `kimi mcp add`; its only built-in editor is the
+            # interactive /mcp-config TUI command, so write mcp.json directly.
+            local config
+            config="$(kimi_home)/mcp.json"
+            mkdir -p "$(dirname "$config")"
+            [[ -f "$config" ]] || echo '{"mcpServers":{}}' > "$config"
+            local args_json updated
+            args_json=$(printf '%s\n' "$@" | jq -R . | jq -s .)
+            updated=$(jq --arg n "$name" --arg c "$cmd" --argjson a "$args_json" \
+                '.mcpServers[$n] = {"command":$c,"args":$a}' "$config")
+            echo "$updated" | jq . > "$config"
+            ;;
     esac
 }
 
 # Check whether an MCP auto-approve permission exists for a given tool.
-# Returns success for tools without a known permission model (e.g. codex).
+# Returns success for tools without a JSON permission allow-list we can edit
+# safely — codex, and kimi (whose rules live in config.toml as a
+# [[permission.rules]] array of tables).
 is_mcp_permitted() {
     local tool="$1" permission="$2"
     case "$tool" in
@@ -759,6 +784,8 @@ gh_skill_available() {
 }
 
 # Map an internal tool name to its `gh skill --agent` identifier.
+# Tools gh has no agent id for (Kimi Code) return empty and are skipped by
+# configure_gh_skill.
 gh_skill_agent_id() {
     case "$1" in
         claude)      echo "claude-code" ;;
@@ -818,8 +845,8 @@ configure_gh_skill() {
 # commands this repo ships. Its scriptable installer targets providers by name.
 
 # Map an internal tool name to its Impeccable `--providers` id.
-# Only tools Impeccable supports are mapped; Antigravity has no provider, so it
-# is omitted (returns empty) and skipped by the caller.
+# Only tools Impeccable supports are mapped; Antigravity and Kimi Code have no
+# provider, so they are omitted (return empty) and skipped by the caller.
 impeccable_provider_id() {
     case "$1" in
         claude)  echo "claude" ;;
@@ -1007,8 +1034,9 @@ done
 
 # ---- prerequisite checks --------------------------------------------------
 
-if [[ ! -d ".claude/commands" ]] && [[ ! -d ".codex/skills" ]] && [[ ! -d ".copilot/skills" ]] && [[ ! -d ".antigravity/skills" ]]; then
-    print_error "No command directories found (.claude/commands, .codex/skills, .copilot/skills, .antigravity/skills)."
+if [[ ! -d ".claude/commands" ]] && [[ ! -d ".codex/skills" ]] && [[ ! -d ".copilot/skills" ]] \
+    && [[ ! -d ".antigravity/skills" ]] && [[ ! -d ".kimi-code/skills" ]]; then
+    print_error "No command directories found (.claude/commands, .codex/skills, .copilot/skills, .antigravity/skills, .kimi-code/skills)."
     print_error "Please run this script from the ai-coding-setup repository root."
     exit 1
 fi
@@ -1056,6 +1084,10 @@ if command -v agy &>/dev/null; then
     detected_tools+=("antigravity")
 fi
 
+if command -v kimi &>/dev/null; then
+    detected_tools+=("kimi")
+fi
+
 if [[ ${#detected_tools[@]} -eq 0 ]]; then
     print_error "No supported AI coding tools detected."
     echo ""
@@ -1064,6 +1096,7 @@ if [[ ${#detected_tools[@]} -eq 0 ]]; then
     echo "  - Codex CLI:        https://github.com/openai/codex"
     echo "  - Copilot CLI:      https://docs.github.com/en/copilot/copilot-cli"
     echo "  - Antigravity CLI:  https://antigravity.google/"
+    echo "  - Kimi Code CLI:    https://www.kimi.com/code"
     echo ""
     exit 1
 fi
@@ -1081,6 +1114,7 @@ for i in "${!detected_tools[@]}"; do
         codex)       echo -e "  ${BOLD}$((i + 1)))${NC} Codex CLI" ;;
         copilot)     echo -e "  ${BOLD}$((i + 1)))${NC} Copilot CLI" ;;
         antigravity) echo -e "  ${BOLD}$((i + 1)))${NC} Antigravity CLI" ;;
+        kimi)        echo -e "  ${BOLD}$((i + 1)))${NC} Kimi Code CLI" ;;
     esac
 done
 
@@ -1142,6 +1176,14 @@ for tool in "${selected_tools[@]}"; do
             else
                 print_error "agy plugin install failed; see output above"
             fi
+            ;;
+        kimi)
+            # Kimi discovers user-level skills under $KIMI_CODE_HOME/skills
+            # (default ~/.kimi-code/skills) and invokes them as /skill:<name>.
+            install_commands "Kimi Code CLI" \
+                ".kimi-code/skills" "$(kimi_home)/skills" \
+                "skill" "$MD_MARKER" "/skill:" "get_skill_description"
+            configure_mcp "kimi" "Kimi Code CLI" "kimi"
             ;;
     esac
 done
@@ -1258,7 +1300,7 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
     # code changes) and codex for reviewing (second opinion), but fall
     # back to the same agent for both roles if only one tool is available.
     _default_editor="" _default_reviewer=""
-    for _t in claude codex copilot antigravity; do
+    for _t in claude codex copilot antigravity kimi; do
         [[ " ${selected_tools[*]} " == *" $_t "* ]] || continue
         [[ -z "$_default_editor" ]] && _default_editor="$_t"
         [[ -n "$_default_editor" ]] && [[ "$_t" != "$_default_editor" ]] && _default_reviewer="$_t"
@@ -1278,10 +1320,10 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
 # ai-coding-setup — default agent configuration for review loops.
 # These defaults can be overridden per-invocation with --editor / --reviewer flags.
 
-# Agent for editing/implementation (claude, codex, copilot, antigravity)
+# Agent for editing/implementation (claude, codex, copilot, antigravity, kimi)
 EDITOR_AGENT=$_default_editor
 
-# Agent for reviewing (claude, codex, copilot, antigravity)
+# Agent for reviewing (claude, codex, copilot, antigravity, kimi)
 REVIEWER_AGENT=$_default_reviewer
 CONF
         print_success "Created $config_file"
@@ -1303,6 +1345,7 @@ for tool in "${selected_tools[@]}"; do
         codex)       echo -e "  Codex CLI        — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
         copilot)     echo -e "  Copilot CLI      — type ${BOLD}/skill-name${NC} in the prompt" ;;
         antigravity) echo -e "  Antigravity CLI  — type ${BOLD}/skill-name${NC} in the prompt" ;;
+        kimi)        echo -e "  Kimi Code CLI    — type ${BOLD}/skill:skill-name${NC} in the prompt" ;;
     esac
 done
 
