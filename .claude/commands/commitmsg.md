@@ -1,11 +1,9 @@
 ---
-description: "Propose a single git commit message for the currently staged changes."
+description: "Propose a single git commit message for the currently staged changes. Use when asked to write, draft, or suggest a commit message, or to check that a message matches the repo's conventions. Proposes the message only — it does not commit."
 allowed-tools: Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git branch:*)
 ---
 
 # Commit Message
-
-Propose a single git commit message for the currently staged changes.
 
 ## Gather context
 
