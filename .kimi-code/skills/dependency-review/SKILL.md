@@ -1,15 +1,11 @@
 ---
 name: dependency-review
-description: "Audit package dependency updates for supply-chain risk: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes."
+description: "Audit package dependency updates for supply-chain risk: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes. Use whenever a branch, PR, or working directory changes a dependency manifest or lockfile — package.json, requirements.txt, pyproject.toml, Gemfile, go.mod, Cargo.toml, pom.xml, build.gradle, composer.json, pubspec.yaml, or the lockfile beside them — including Dependabot/Renovate batches and newly added packages."
 ---
 
 # Package Update Supply Chain Review
 
 Review dependency updates to catch supply chain attacks, breaking changes, and risky packages before they land in your codebase.
-
-## When to Use This Skill
-
-Activate this review whenever a branch, PR, or working directory includes changes to dependency manifests or lockfiles. Common triggers include version bumps in package.json, requirements.txt, pyproject.toml, Gemfile, go.mod, Cargo.toml, pom.xml, build.gradle, composer.json, pubspec.yaml, or their corresponding lockfiles.
 
 ## Review Workflow
 
@@ -22,8 +18,7 @@ For each updated or newly added package, work through all five checks below. Pre
 **Steps:**
 
 1. Look up the publish date for the exact version on its registry — e.g. `npm view <pkg> time --json`, `curl https://pypi.org/pypi/<pkg>/<version>/json`, `gem info <pkg> --remote`, or the registry's web page.
-2. Calculate the number of days between the publish date and today.
-3. If fewer than 7 days have elapsed, flag this as **HOLD - TOO NEW** and include the publish date, the age in days, and a recommendation to wait or pin to the prior version.
+2. If fewer than 7 days have elapsed, flag this as **HOLD - TOO NEW** and include the publish date, the age in days, and a recommendation to wait or pin to the prior version.
 
 ### 2. Changelog and Diff Verification
 
@@ -75,7 +70,7 @@ For each updated or newly added package, work through all five checks below. Pre
 
 **Steps:**
 
-1. Check if the version bump follows semver. A major version bump signals intentional breaking changes. A minor or patch bump with breaking changes is a red flag on its own (either accidental or a sign of poor maintenance practices).
+1. Check the bump against semver. Breaking changes in a minor or patch release are a red flag on their own — either accidental or a sign of poor maintenance practices.
 2. Read the migration guide or upgrade notes if one exists.
 3. Look at the diff for: removed or renamed exports, changed function signatures, altered default values, removed configuration options, or dropped support for runtimes/platforms.
 4. Search the codebase for usages of any changed or removed APIs. List the files and line numbers that may need updates.

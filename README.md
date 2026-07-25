@@ -292,6 +292,30 @@ Commands are authored once as Claude Code command files; everything else is gene
 
 Run `./setup` again to install.
 
+### Prompt style
+
+These commands target current-generation models, which follow intent better than
+procedure. Anthropic's [new rules of context engineering][ctx] are the house
+style here:
+
+- **Put the trigger in the `description`.** It is the only text a model sees
+  before deciding to load the skill, so say *when* to reach for it — and when to
+  reach for a sibling instead — not just what it does.
+- **Say it once.** If the body opens by restating the `description`, delete that
+  line. Guidance belongs in exactly one place.
+- **Spend tokens on gotchas, not procedure.** Skip steps a competent model
+  already knows (how to read a diff hunk, how to subtract two dates). Keep the
+  things it cannot infer: the `--slurp` / `--jq` conflict in `gh api`, an empty
+  staged diff that still has staged files, which install hooks run automatically.
+- **Frame outcomes, not rules.** "Match the surrounding code" beats a list of
+  banned constructs. Reserve hard constraints for the places where breaking them
+  breaks something — the review loops really do depend on the exact
+  `NO_FURTHER_FEEDBACK` sentinel and on the reviewer never touching source files.
+- **Keep rubrics and output templates.** Structured criteria and worked report
+  formats are references the model fills in, not rules that box it in.
+
+[ctx]: https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models
+
 ## Uninstalling
 
 Delete the command/skill from the corresponding directory (or uninstall the plugin for Antigravity):

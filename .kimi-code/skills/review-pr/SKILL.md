@@ -1,11 +1,9 @@
 ---
 name: review-pr
-description: "Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review."
+description: "Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review. Use when asked to address, respond to, or clear PR feedback, or to get a PR green and back in front of its reviewers. Operates on an open PR; for local staged work use code-review instead."
 ---
 
 # Review PR Feedback Loop
-
-Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
 
 ## Constraints
 

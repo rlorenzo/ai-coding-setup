@@ -1,11 +1,11 @@
 ---
 name: efficient-orchestration
-description: "Run this task with your current model orchestrating while cheaper subagents do the token-heavy research, coding, and testing."
+description: "Run this task with your current model orchestrating while cheaper subagents do the token-heavy research, coding, and testing. Use for work that is large, parallelizable, or token-hungry — broad repo scans, long logs, wide test or browser passes, repetitive edits — or when the user asks to conserve usage limits. Skip it for small, sequential, or judgment-dense tasks."
 ---
 
 # Efficient Orchestration
 
-Orchestrate this task on your current model; delegate token-heavy work to cheaper, faster subagents. Use your harness's subagent mechanism if it has one (e.g. Claude Code's Task tool, Antigravity subagents); otherwise spawn your own CLI non-interactively per slice with an explicit model (e.g. `codex exec -m <model> "<handoff>"`).
+Use your harness's subagent mechanism if it has one (e.g. Claude Code's Task tool, Antigravity subagents); otherwise spawn your own CLI non-interactively per slice with an explicit model (e.g. `codex exec -m <model> "<handoff>"`).
 
 ## Tiers
 
