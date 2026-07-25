@@ -7,6 +7,7 @@
 #       -> .codex/skills/<name>/SKILL.md        (name/description frontmatter + body)
 #       -> .copilot/skills/<name>/SKILL.md
 #       -> .antigravity/skills/<name>/SKILL.md
+#       -> .kimi-code/skills/<name>/SKILL.md
 #       -> prompts/<name>.md                    (body only, for the review loops)
 #
 # Usage:
@@ -17,9 +18,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Commands that ship as Agent Skills for Codex/Copilot/Antigravity.
+# Commands that ship as Agent Skills for Codex/Copilot/Antigravity/Kimi Code.
 SKILL_COMMANDS=(code-refinement code-review commitmsg dependency-review efficient-orchestration review-pr)
-SKILL_DIRS=(.codex/skills .copilot/skills .antigravity/skills)
+SKILL_DIRS=(.codex/skills .copilot/skills .antigravity/skills .kimi-code/skills)
 
 # Commands whose bodies also drive the review loop scripts as shared prompts.
 PROMPT_COMMANDS=(code-refinement code-review)

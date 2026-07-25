@@ -25,7 +25,7 @@ repos:
         args: ["--check"]
         language: script
         pass_filenames: false
-        files: ^(\.claude/commands/|\.codex/|\.copilot/|\.antigravity/skills/|prompts/|tools/generate)
+        files: ^(\.claude/commands/|\.codex/|\.copilot/|\.antigravity/skills/|\.kimi-code/skills/|prompts/|tools/generate)
         stages: [pre-commit]
       - id: bats-unit-tests
         name: BATS unit tests

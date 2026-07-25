@@ -22,6 +22,7 @@ The `setup` script and the review loops are Bash scripts that shell out to a han
 - [Codex CLI](https://github.com/openai/codex)
 - [Copilot CLI](https://docs.github.com/en/copilot/copilot-cli)
 - Antigravity CLI (using the `agy` command)
+- [Kimi Code CLI](https://www.kimi.com/code) (using the `kimi` command)
 
 ### Installing the prerequisites
 
@@ -57,7 +58,10 @@ The script detects which AI tools you have installed and walks you through insta
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
 | Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Antigravity CLI | Unified Plugin (`plugin.json`) | `.antigravity/` | `~/.gemini/antigravity-cli/plugins/ai-coding-setup/` |
+| Kimi Code CLI | Agent Skills (`SKILL.md`) | `.kimi-code/skills/` | `~/.kimi-code/skills/` |
 | Shared prompts | Markdown (`.md`) | `prompts/` | `~/.local/share/ai-coding-setup/prompts/` |
+
+Kimi Code reads its user-level data from `$KIMI_CODE_HOME` when that variable is set; `setup` honors it and falls back to `~/.kimi-code`. Kimi invokes skills as `/skill:<name>`, so the commands below are `/skill:commitmsg`, `/skill:review-pr`, and so on.
 
 ## Available Commands
 
@@ -71,6 +75,7 @@ Propose a conventional commit message for the currently staged changes. Detects 
 - Codex CLI: `$commitmsg`
 - Copilot CLI: `/commitmsg`
 - Antigravity CLI: `/commitmsg`
+- Kimi Code CLI: `/skill:commitmsg`
 
 ### /review-pr
 
@@ -82,6 +87,7 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 - Codex CLI: `$review-pr [PR_NUMBER]`
 - Copilot CLI: `/review-pr [PR_NUMBER]`
 - Antigravity CLI: `/review-pr [PR_NUMBER]`
+- Kimi Code CLI: `/skill:review-pr [PR_NUMBER]`
 
 ### /code-refinement
 
@@ -93,6 +99,7 @@ Review staged files for code quality (KISS, DRY, YAGNI, Clean Code), fix linting
 - Codex CLI: `$code-refinement`
 - Copilot CLI: `/code-refinement`
 - Antigravity CLI: `/code-refinement`
+- Kimi Code CLI: `/skill:code-refinement`
 
 ### /code-review
 
@@ -104,6 +111,7 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 - Codex CLI: `$code-review`
 - Copilot CLI: `/code-review`
 - Antigravity CLI: `/code-review`
+- Kimi Code CLI: `/skill:code-review`
 
 ### /dependency-review
 
@@ -115,6 +123,7 @@ Audit dependency updates for supply-chain risk before they land: publish-age gat
 - Codex CLI: `$dependency-review`
 - Copilot CLI: `/dependency-review`
 - Antigravity CLI: `/dependency-review`
+- Kimi Code CLI: `/skill:dependency-review`
 
 ### /efficient-orchestration
 
@@ -128,6 +137,7 @@ The skill also pins the model explicitly on every spawn (since Claude Code v2.1.
 - Codex CLI: `$efficient-orchestration`
 - Copilot CLI: `/efficient-orchestration`
 - Antigravity CLI: `/efficient-orchestration`
+- Kimi Code CLI: `/skill:efficient-orchestration`
 
 ## Claude Code Agents
 
@@ -195,7 +205,9 @@ EDITOR_AGENT=claude
 REVIEWER_AGENT=codex
 ```
 
-Supported agents: `claude`, `codex`, `copilot`, `antigravity`. Only the agents you actually have installed need to be referenced.
+Supported agents: `claude`, `codex`, `copilot`, `antigravity`, `kimi`. Only the agents you actually have installed need to be referenced.
+
+Two caveats for `kimi`: it takes its prompt as a command-line argument (there is no stdin form), so on Windows/Git Bash a very large prompt can exceed the OS argument limit — the same limitation Copilot has. And it has no per-run flag to disable MCP servers, so an autonomous loop run still loads whatever is configured in `~/.kimi-code/mcp.json`.
 
 Both loops write their working files (`agent-code-review.md`, `agent-review-summary.md`, `feedback-plan.md`, `plan-review-summary.md`) to the target project's root. Consider adding those names to that project's `.gitignore` (or your global gitignore) so an agent never commits them by accident.
 
@@ -214,7 +226,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 
 ## How It Works
 
-- Each AI tool has its own command format, but the content is maintained once: `.claude/commands/*.md` files are the canonical sources, and `tools/generate` derives the Codex/Copilot/Antigravity `SKILL.md` files and the shared loop prompts from them. A pre-commit/CI check (`tools/generate --check`) fails if the derived files drift from their sources.
+- Each AI tool has its own command format, but the content is maintained once: `.claude/commands/*.md` files are the canonical sources, and `tools/generate` derives the Codex/Copilot/Antigravity/Kimi `SKILL.md` files and the shared loop prompts from them. A pre-commit/CI check (`tools/generate --check`) fails if the derived files drift from their sources.
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
@@ -228,7 +240,7 @@ The setup script can configure [Model Context Protocol (MCP)](https://modelconte
 | --- | --- | --- |
 | [Playwright](https://github.com/microsoft/playwright-mcp) | `@playwright/mcp@latest` | Browser automation and web testing |
 
-MCP servers are added via each tool's `mcp add` CLI command at user scope.
+MCP servers are added via each tool's `mcp add` CLI command at user scope. Tools without one (Copilot, Antigravity, Kimi Code) get their JSON config file edited directly — for Kimi that is `~/.kimi-code/mcp.json`, whose only built-in editor is the interactive `/mcp-config` TUI command.
 
 ## `gh` Agent Skill
 
@@ -239,7 +251,7 @@ For each agent you select, `setup` installs it when missing and updates it when 
 - Install — `gh skill install cli/cli gh --agent <id> --scope user`
 - Update — `gh skill update gh`
 
-This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature). To manage it yourself:
+This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature), and for Kimi Code, which `gh skill` has no `--agent` id for. To manage it yourself:
 
 ```bash
 gh skill install cli/cli gh --agent claude-code --scope user   # install for one agent
@@ -261,7 +273,7 @@ npx impeccable install --providers=claude,codex,github --scope=global
 
 Because it runs via `npx` (always the latest) with explicit `--providers`/`--scope`, re-running `setup` and accepting this step refreshes an existing install and adds any newly-selected agents. There is no separate detect-and-update branch (unlike the `gh` skill above), since `install` with explicit providers is already idempotent and provider-aware.
 
-Antigravity CLI has no Impeccable provider, so it is skipped. This step needs `npx` (Node.js). To manage Impeccable yourself:
+Antigravity CLI and Kimi Code CLI have no Impeccable provider, so they are skipped. This step needs `npx` (Node.js). To manage Impeccable yourself:
 
 ```bash
 npx impeccable install --providers=claude --scope=global   # install for one provider
@@ -275,7 +287,7 @@ See [impeccable.style](https://impeccable.style) for the full command list and t
 Commands are authored once as Claude Code command files; everything else is generated:
 
 1. Create `.claude/commands/command-name.md` — markdown with YAML front matter containing at least `description` (plus optional Claude-specific keys like `allowed-tools` or `argument-hint`), and an optional `$ARGUMENTS` placeholder in the body.
-2. If the command should also ship as a Codex/Copilot/Antigravity skill, add its name to `SKILL_COMMANDS` in `tools/generate` (or `PROMPT_COMMANDS` if the review loops need it as a shared prompt).
+2. If the command should also ship as a Codex/Copilot/Antigravity/Kimi skill, add its name to `SKILL_COMMANDS` in `tools/generate` (or `PROMPT_COMMANDS` if the review loops need it as a shared prompt).
 3. Run `tools/generate` to produce the derived `SKILL.md` and prompt files, and commit them together with the source.
 
 Run `./setup` again to install.
@@ -288,6 +300,7 @@ Delete the command/skill from the corresponding directory (or uninstall the plug
 - Codex: `~/.codex/skills/`
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
+- Kimi Code: `~/.kimi-code/skills/` (or `$KIMI_CODE_HOME/skills/`)
 
 The setup script only manages commands it originally installed.
 

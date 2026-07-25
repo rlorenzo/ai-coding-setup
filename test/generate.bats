@@ -7,7 +7,8 @@ load test_helper
 # Copy the source tree pieces the generator needs into an isolated tmp repo.
 copy_repo() {
     cp -r "$PROJECT_ROOT/.claude" "$PROJECT_ROOT/.codex" "$PROJECT_ROOT/.copilot" \
-        "$PROJECT_ROOT/.antigravity" "$PROJECT_ROOT/prompts" "$TEST_TMPDIR/"
+        "$PROJECT_ROOT/.antigravity" "$PROJECT_ROOT/.kimi-code" "$PROJECT_ROOT/prompts" \
+        "$TEST_TMPDIR/"
     mkdir -p "$TEST_TMPDIR/tools"
     cp "$PROJECT_ROOT/tools/generate" "$TEST_TMPDIR/tools/"
 }
@@ -24,6 +25,14 @@ copy_repo() {
     run "$TEST_TMPDIR/tools/generate" --check
     assert_failure
     assert_output --partial "stale: .codex/skills/commitmsg/SKILL.md"
+}
+
+@test "generate --check fails when a derived kimi skill drifts" {
+    copy_repo
+    echo "drift" >> "$TEST_TMPDIR/.kimi-code/skills/commitmsg/SKILL.md"
+    run "$TEST_TMPDIR/tools/generate" --check
+    assert_failure
+    assert_output --partial "stale: .kimi-code/skills/commitmsg/SKILL.md"
 }
 
 @test "generate --check fails when a derived prompt drifts" {

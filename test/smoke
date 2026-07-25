@@ -24,7 +24,7 @@ source "$PROJECT_ROOT/lib/lib-review-loop"
 # ---- configuration -------------------------------------------------------
 
 TIMEOUT=120  # seconds per agent invocation
-ALL_AGENTS="claude codex copilot antigravity"
+ALL_AGENTS="claude codex copilot antigravity kimi"
 
 # ---- usage ---------------------------------------------------------------
 
