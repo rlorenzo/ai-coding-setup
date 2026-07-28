@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for lib/lib-review-loop — pure library functions.
+# Unit tests for lib/lib-review-loop: pure library functions.
 # Agent runner tests are in test/smoke (uses real CLI agents).
 
 load test_helper
@@ -242,6 +242,35 @@ EOF
     FEEDBACK_FILE="$TEST_TMPDIR/nonexistent.md"
     run test_reviewer_satisfied
     assert_failure
+}
+
+# =========================================================================
+# Prompt/detector contract
+#
+# The loops terminate by grepping for a sentinel the shipped prompt tells the
+# agent to emit.  Rewording either side alone breaks the loop silently, so
+# feed each prompt's own sentinel to the detector that looks for it.
+# =========================================================================
+
+@test "code-review prompt states the verdict test_review_clean detects" {
+    source_lib
+    verdict=$(grep -m1 -o '\*\*Verdict:[^*]*\*\*' "$PROJECT_ROOT/prompts/code-review.md") \
+        || fail "prompts/code-review.md no longer states a **Verdict: ...** line"
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "$verdict" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "plan-review prompt states the sentinel test_reviewer_satisfied detects" {
+    source_lib
+    # shellcheck disable=SC2016  # the backticks are literal regex, not a subshell
+    sentinel=$(grep -m1 -oE '`[A-Z_]{4,}`' "$PROJECT_ROOT/prompts/plan-review.md") \
+        || fail "prompts/plan-review.md no longer names an all-caps sentinel"
+    FEEDBACK_FILE="$TEST_TMPDIR/feedback.md"
+    echo "${sentinel//\`/}" > "$FEEDBACK_FILE"
+    run test_reviewer_satisfied
+    assert_success
 }
 
 @test "build_improvement_prompt includes all parameters" {

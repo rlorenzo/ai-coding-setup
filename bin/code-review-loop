@@ -73,6 +73,7 @@ validate_positive_int "$MAX_ITERATIONS" "--max-iterations"
 # ---- paths ---------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
 REVIEW_FILE="$PROJECT_ROOT/agent-code-review.md"
+SUMMARY_FILE="$PROJECT_ROOT/agent-review-summary.md"
 
 EDITOR_REFINEMENT_PROMPT="$PROMPTS_DIR/code-refinement.md"
 EDITOR_RESPONSE_PROMPT="$PROMPTS_DIR/code-review-response.md"
@@ -97,7 +98,7 @@ stage_review_changes() {
     fi
 
     # Stage unstaged tracked modifications that were NOT present before the loop
-    # started — those are changes made by the review agents.  Pre-existing
+    # started; those are changes made by the review agents.  Pre-existing
     # unstaged changes (captured in BASELINE_UNSTAGED) are left untouched.
     local unstaged_modified
     unstaged_modified=$(git diff --name-only 2>/dev/null | sort) || true
@@ -110,7 +111,7 @@ stage_review_changes() {
         done <<< "$agent_modified"
     fi
 
-    # Stage newly created untracked files — these are legitimate fixes from
+    # Stage newly created untracked files: these are legitimate fixes from
     # the editor's refinement (new tests, helper modules, etc.).  Artifacts from
     # tools (coverage, caches) should be covered by .gitignore; the snapshot
     # already uses --exclude-standard so gitignored files are never seen here.
@@ -144,7 +145,7 @@ validate_prompts "${_required_prompts[@]}"
 
 # ---- main ----------------------------------------------------------------
 
-# Detect partially staged files (some hunks staged, others not) — these would
+# Detect partially staged files (some hunks staged, others not); these would
 # cause the staging logic to either miss review fixes or pull in unrelated hunks.
 partially_staged=$(comm -12 \
     <(git diff --staged --name-only 2>/dev/null | sort) \
@@ -181,12 +182,12 @@ initial_diff=$(git diff --staged --stat 2>&1) || true
 initial_diff_full=$(git diff --staged 2>&1) || true
 initial_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
 
-# Baseline unstaged tracked files — only changes to files NOT in this list
+# Baseline unstaged tracked files: only changes to files NOT in this list
 # should be staged during the loop (they come from the review agents).
 BASELINE_UNSTAGED="$TMPDIR_REVIEW/baseline-unstaged.txt"
 git diff --name-only 2>/dev/null | sort > "$BASELINE_UNSTAGED"
 
-# Baseline untracked files — only files created *during* the loop should be staged
+# Baseline untracked files: only files created *during* the loop should be staged
 BASELINE_UNTRACKED="$TMPDIR_REVIEW/baseline-untracked.txt"
 snapshot_untracked > "$BASELINE_UNTRACKED"
 
@@ -269,7 +270,7 @@ if [[ $local_exit -ne 0 ]]; then
 fi
 
 if [[ ! -f "$REVIEW_FILE" ]]; then
-    write_status "No review file created — $REVIEWER_AGENT may have failed" "$RED"
+    write_status "No review file created; $REVIEWER_AGENT may have failed" "$RED"
     echo ""
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${MAGENTA} Code Review Loop Complete${NC}"
@@ -291,7 +292,7 @@ iteration=0
 while [[ $iteration -lt $MAX_ITERATIONS ]]; do
     if test_review_clean; then
         echo ""
-        write_status "Review is clean — no High or Medium issues!" "$GREEN"
+        write_status "Review is clean: no High or Medium issues!" "$GREEN"
         break
     fi
 
@@ -346,7 +347,7 @@ IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings."
     cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "$REVIEWER_AGENT follow-up review failed (exit $local_exit) — aborting review loop" "$YELLOW"
+        write_status "$REVIEWER_AGENT follow-up review failed (exit $local_exit), aborting review loop" "$YELLOW"
         break
     fi
 
@@ -391,6 +392,9 @@ else
 fi
 
 write_step "Final" "$EDITOR_AGENT: Writing improvement summary"
+# Clear any summary left by a previous run so the post-run existence check
+# below reflects this run, not a stale artifact
+rm -f "$SUMMARY_FILE" 2>/dev/null || true
 
 summary_prompt="Write a narrative summary of code improvements to the file agent-review-summary.md in the project root.
 
@@ -399,7 +403,7 @@ Final status: $final_status
 Editor agent: $EDITOR_AGENT | Reviewer agent: $REVIEWER_AGENT
 
 ## Initial Staged Diff (before review loop)
-This is what was staged BEFORE the review loop started — the original author's work:
+This is what was staged BEFORE the review loop started, the original author's work:
 $initial_diff
 Full diff available at: $initial_diff_file
 
@@ -418,7 +422,7 @@ $review_created_files
 
 ## Instructions for the summary
 
-Your job is to summarize what the CODE REVIEW LOOP changed — NOT the original authored code.
+Your job is to summarize what the CODE REVIEW LOOP changed, NOT the original authored code.
 Compare the initial diff (before) with the final diff (after) to identify what the review cycle added, fixed, or improved on top of the original work.
 
 Write agent-review-summary.md with this structure:
@@ -434,6 +438,13 @@ Be concise and focus on the substance of review-driven improvements, not the ori
 
 local_exit=0
 run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
+
+if [[ $local_exit -ne 0 ]]; then
+    write_status "$EDITOR_AGENT summary generation exited with code $local_exit" "$YELLOW"
+fi
+if [[ ! -f "$SUMMARY_FILE" ]]; then
+    write_status "No summary file created; $EDITOR_AGENT may have failed" "$YELLOW"
+fi
 
 # ---- Cleanup intermediate files -----------------------------------------
 # Only remove the review file when truly clean with zero issues at all severities
@@ -460,7 +471,11 @@ echo " Editor   : $EDITOR_AGENT"
 echo " Reviewer : $REVIEWER_AGENT"
 echo ""
 [[ -f "$REVIEW_FILE" ]] && echo -e " Review   : agent-code-review.md"
-echo -e " Summary  : agent-review-summary.md"
+if [[ -f "$SUMMARY_FILE" ]]; then
+    echo -e " Summary  : agent-review-summary.md"
+else
+    echo -e " Summary  : ${YELLOW}not created${NC}"
+fi
 echo ""
 if [[ -n "$STASH_REF" ]]; then
     # Resolve which stash@{N} entry corresponds to our saved hash

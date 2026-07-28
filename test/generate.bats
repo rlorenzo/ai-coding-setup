@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for tools/generate — the derived-file generator that keeps the
+# Tests for tools/generate: the derived-file generator that keeps the
 # per-tool skills and shared prompts in sync with .claude/commands/.
 
 load test_helper

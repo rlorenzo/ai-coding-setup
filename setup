@@ -83,7 +83,7 @@ prompt_yes_no() {
     [[ "$yn" =~ ^[Yy]$ ]]
 }
 
-# Description extractors — one per file format.
+# Description extractors, one per file format.
 get_md_description() {
     local desc content
     content=$(cat "$1")
@@ -162,7 +162,7 @@ parse_mcp_server() {
 display_mcp_list() {
     for server_def in "$@"; do
         parse_mcp_server "$server_def"
-        echo -e "  • ${BOLD}${_mcp_name}${NC} — ${_mcp_command} ${_mcp_args[*]}"
+        echo -e "  • ${BOLD}${_mcp_name}${NC}: ${_mcp_command} ${_mcp_args[*]}"
     done
 }
 
@@ -245,7 +245,7 @@ add_mcp_server() {
 
 # Check whether an MCP auto-approve permission exists for a given tool.
 # Returns success for tools without a JSON permission allow-list we can edit
-# safely — codex, and kimi (whose rules live in config.toml as a
+# safely: codex, and kimi (whose rules live in config.toml as a
 # [[permission.rules]] array of tables).
 is_mcp_permitted() {
     local tool="$1" permission="$2"
@@ -293,12 +293,12 @@ configure_mcp() {
     local tool="$1" display_name="$2" cli_command="$3"
 
     if ! command -v "$cli_command" &>/dev/null; then
-        print_warning "$cli_command command not found — skipping MCP configuration"
+        print_warning "$cli_command command not found, skipping MCP configuration"
         return
     fi
 
     if ! command -v npx &>/dev/null; then
-        print_warning "npx not found — skipping MCP servers (install Node.js)"
+        print_warning "npx not found, skipping MCP servers (install Node.js)"
         return
     fi
 
@@ -316,7 +316,7 @@ configure_mcp() {
         echo -e "  ${DIM}MCP servers already configured${NC}"
     else
         echo ""
-        echo "  MCP servers to configure (user scope — available in all projects):"
+        echo "  MCP servers to configure (user scope, available in all projects):"
         echo ""
         display_mcp_list "${missing_mcp[@]}"
         echo ""
@@ -445,7 +445,7 @@ install_commands() {
         if $dest_exists; then
             if has_marker "$marker" "$dest_file"; then
                 if is_up_to_date "$src_file" "$dest_file" "$marker"; then
-                    echo -e "  ${DIM}${label} — up to date${NC}"
+                    echo -e "  ${DIM}${label}: up to date${NC}"
                     ((++current))
                 else
                     if [[ "$mode" == skill ]]; then
@@ -470,7 +470,7 @@ install_commands() {
                     print_success "Overwritten ${label} (was custom)"
                     ((++installed))
                 else
-                    print_warning "${label} exists (custom) — skipped"
+                    print_warning "${label} exists (custom), skipped"
                     ((++skipped))
                 fi
             fi
@@ -558,7 +558,7 @@ configure_claude_settings() {
     fi
 
     if ! jq empty "$settings_file" 2>/dev/null; then
-        print_warning "$HOME/.claude/settings.json is not valid JSON — skipping"
+        print_warning "$HOME/.claude/settings.json is not valid JSON, skipping"
         return
     fi
 
@@ -611,7 +611,7 @@ configure_claude_settings() {
 
     # ── Nothing to do? ──────────────────────────────────────────
     if [[ ${#feature_changes[@]} -eq 0 ]] && [[ ${#missing_perms[@]} -eq 0 ]]; then
-        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
+        echo -e "  ${DIM}Settings already configured, nothing to do${NC}"
         return
     fi
 
@@ -622,12 +622,12 @@ configure_claude_settings() {
         echo ""
         for change in "${feature_changes[@]}"; do
             case "$change" in
-                webfetch)    echo -e "  • ${BOLD}WebFetch${NC} — allow web page fetching without prompting" ;;
-                websearch)   echo -e "  • ${BOLD}WebSearch${NC} — allow web searches without prompting" ;;
-                attribution) echo -e "  • ${BOLD}attribution${NC} — disable commit/PR/session attribution tags" ;;
-                teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC} — enable agent teams" ;;
-                noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC} — flicker-free fullscreen rendering" ;;
-                powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC} — enable native PowerShell tool" ;;
+                webfetch)    echo -e "  • ${BOLD}WebFetch${NC}: allow web page fetching without prompting" ;;
+                websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
+                attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
+                teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
+                noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
+                powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
             esac
         done
         echo ""
@@ -705,7 +705,7 @@ configure_codex_settings() {
     fi
 
     if [[ ${#changes[@]} -eq 0 ]]; then
-        echo -e "  ${DIM}Settings already configured — nothing to do${NC}"
+        echo -e "  ${DIM}Settings already configured, nothing to do${NC}"
         return
     fi
 
@@ -714,8 +714,8 @@ configure_codex_settings() {
     echo ""
     for change in "${changes[@]}"; do
         case "$change" in
-            remove_collab)   echo -e "  • ${BOLD}Remove collab${NC} — deprecated, replaced by multi_agent" ;;
-            add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC} — enable multi-agent collaboration" ;;
+            remove_collab)   echo -e "  • ${BOLD}Remove collab${NC}: deprecated, replaced by multi_agent" ;;
+            add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC}: enable multi-agent collaboration" ;;
         esac
     done
     echo ""
@@ -763,7 +763,7 @@ configure_copilot_settings() {
     fi
 
     if ! jq empty "$config_file" 2>/dev/null; then
-        print_warning "$HOME/.copilot/config.json is not valid JSON — skipping"
+        print_warning "$HOME/.copilot/config.json is not valid JSON, skipping"
         return
     fi
 
@@ -774,8 +774,8 @@ configure_copilot_settings() {
 #
 # The cli/cli repo publishes an agent skill named `gh` that teaches coding
 # agents how to drive the GitHub CLI (structured output, pagination, repo
-# targeting, search vs list, gh api fallback). Offer to install it — or update
-# it if already present — for a selected agent. This is an upstream skill,
+# targeting, search vs list, gh api fallback). Offer to install it (or update
+# it if already present) for a selected agent. This is an upstream skill,
 # unrelated to the commands/skills this repo installs.
 
 # True when this gh is new enough to have the `gh skill` command (preview).
@@ -803,7 +803,7 @@ configure_gh_skill() {
     [[ -z "$agent_id" ]] && return
 
     echo ""
-    echo -e "${BOLD}── ${display_name} — gh agent skill ──${NC}"
+    echo -e "${BOLD}── ${display_name}: gh agent skill ──${NC}"
 
     # Already installed for this agent? (list is scoped by --agent)
     local count
@@ -812,11 +812,11 @@ configure_gh_skill() {
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
 
     if [[ "$count" -gt 0 ]]; then
-        echo -e "  ${DIM}gh agent skill already installed — checking for updates${NC}"
+        echo -e "  ${DIM}gh agent skill already installed, checking for updates${NC}"
         if gh skill update gh; then
             print_success "gh agent skill up to date"
         else
-            print_warning "gh skill update failed — see output above"
+            print_warning "gh skill update failed, see output above"
         fi
         return
     fi
@@ -952,11 +952,11 @@ install_scripts() {
             local target
             target=$(readlink "$dest" 2>/dev/null) || true
             if [[ "$target" == "$abs_src" ]]; then
-                echo -e "  ${DIM}${name} — up to date (symlinked)${NC}"
+                echo -e "  ${DIM}${name}: up to date (symlinked)${NC}"
                 ((++current))
                 continue
             fi
-            # Stale symlink (old checkout path) — remove and re-link below
+            # Stale symlink (old checkout path); remove and re-link below
             rm -f "$dest"
             local is_update=true
         fi
@@ -965,7 +965,7 @@ install_scripts() {
             # Check if we manage it (has our marker comment)
             if head -5 "$dest" | grep -qF "source: ai-coding-setup" 2>/dev/null; then
                 if diff -q "$abs_src" "$dest" &>/dev/null; then
-                    echo -e "  ${DIM}${name} — up to date (copied)${NC}"
+                    echo -e "  ${DIM}${name}: up to date (copied)${NC}"
                     ((++current))
                     continue
                 fi
@@ -976,7 +976,7 @@ install_scripts() {
                 if $FORCE; then
                     rm -f "$dest"
                 else
-                    print_warning "${name} exists in $dest_dir (custom) — skipped"
+                    print_warning "${name} exists in $dest_dir (custom), skipped"
                     ((++skipped))
                     continue
                 fi
@@ -1056,8 +1056,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     echo ""
     for tool in "${missing[@]}"; do
         case "$tool" in
-            gh) echo "  gh  — GitHub CLI:      brew install gh      (https://cli.github.com/)" ;;
-            jq) echo "  jq  — JSON processor:  brew install jq      (https://jqlang.github.io/jq/)" ;;
+            gh) echo "  gh  (GitHub CLI):      brew install gh      (https://cli.github.com/)" ;;
+            jq) echo "  jq  (JSON processor):  brew install jq      (https://jqlang.github.io/jq/)" ;;
         esac
     done
     echo ""
@@ -1228,7 +1228,7 @@ if [[ -d "prompts" ]]; then
             _target=$(readlink "$_dest" 2>/dev/null) || true
             [[ "$_target" != "$_src" ]] && ln -sf "$_src" "$_dest"
         elif [[ -f "$_dest" ]]; then
-            # Plain file — only replace if it carries our marker (previous
+            # Plain file: only replace if it carries our marker (previous
             # copy-based install) or --force is set; otherwise preserve user edits.
             if has_marker "$MD_MARKER" "$_dest" || $FORCE; then
                 if ln -sf "$_src" "$_dest" 2>/dev/null && [[ -L "$_dest" ]]; then :; else
@@ -1236,7 +1236,7 @@ if [[ -d "prompts" ]]; then
                     has_marker "$MD_MARKER" "$_dest" || printf '\n%s\n' "$MD_MARKER" >> "$_dest"
                 fi
             else
-                print_warning "$_name exists (custom) — skipped (use --force to overwrite)"
+                print_warning "$_name exists (custom), skipped (use --force to overwrite)"
             fi
         else
             if ln -sf "$_src" "$_dest" 2>/dev/null && [[ -L "$_dest" ]]; then :; else
@@ -1270,7 +1270,7 @@ if [[ -f "$_prompts_dest/plan-review.md" ]] \
 fi
 
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
-    # Install the shared library to ~/.local/lib/ (not bin/ — it's sourced, not executed)
+    # Install the shared library to ~/.local/lib/ (not bin/, since it's sourced, not executed)
     _lib_dest="$HOME/.local/lib"
     _lib_src="$(cd "$(dirname "lib/lib-review-loop")" && pwd)/lib-review-loop"
     mkdir -p "$_lib_dest"
@@ -1289,7 +1289,7 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
     install_scripts "bin" "${review_loop_scripts[@]}"
 elif [[ -d "bin" ]]; then
     echo ""
-    echo -e "  ${DIM}Review loop scripts require shared prompts — skipped${NC}"
+    echo -e "  ${DIM}Review loop scripts require shared prompts, skipped${NC}"
 fi
 
 # ---- create default config file if missing ---------------------------------
@@ -1317,7 +1317,7 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]] && [[ ! -f "$config_file" ]]; then
     echo ""
     if prompt_yes_no "  Create config file with defaults?"; then
         cat > "$config_file" <<CONF
-# ai-coding-setup — default agent configuration for review loops.
+# ai-coding-setup: default agent configuration for review loops.
 # These defaults can be overridden per-invocation with --editor / --reviewer flags.
 
 # Agent for editing/implementation (claude, codex, copilot, antigravity, kimi)
@@ -1341,16 +1341,16 @@ echo "Use your commands in:"
 
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
-        claude)      echo -e "  Claude Code      — type ${BOLD}/command-name${NC} in the prompt" ;;
-        codex)       echo -e "  Codex CLI        — type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
-        copilot)     echo -e "  Copilot CLI      — type ${BOLD}/skill-name${NC} in the prompt" ;;
-        antigravity) echo -e "  Antigravity CLI  — type ${BOLD}/skill-name${NC} in the prompt" ;;
-        kimi)        echo -e "  Kimi Code CLI    — type ${BOLD}/skill:skill-name${NC} in the prompt" ;;
+        claude)      echo -e "  Claude Code:      type ${BOLD}/command-name${NC} in the prompt" ;;
+        codex)       echo -e "  Codex CLI:        type ${BOLD}\$skill-name${NC} to invoke a skill" ;;
+        copilot)     echo -e "  Copilot CLI:      type ${BOLD}/skill-name${NC} in the prompt" ;;
+        antigravity) echo -e "  Antigravity CLI:  type ${BOLD}/skill-name${NC} in the prompt" ;;
+        kimi)        echo -e "  Kimi Code CLI:    type ${BOLD}/skill:skill-name${NC} in the prompt" ;;
     esac
 done
 
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
     echo ""
-    echo -e "  Review loops — run ${BOLD}code-review-loop${NC} or ${BOLD}plan-review-loop${NC} from any project"
+    echo -e "  Review loops: run ${BOLD}code-review-loop${NC} or ${BOLD}plan-review-loop${NC} from any project"
 fi
 echo ""

@@ -9,7 +9,7 @@ The `setup` script and the review loops are Bash scripts that shell out to a han
 **Required** (the `setup` script exits early if any is missing):
 
 - [`git`](https://git-scm.com/), to clone the repo and drive the `git`-based commands
-- [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+, installed and authenticated (`/review-pr` uses `gh pr edit --add-reviewer` to reliably re-request reviews from existing bot reviewers)
+- [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+, installed and authenticated (`/review-pr` uses the `gh pr edit --add-reviewer @copilot` special value added in 2.88.0 to re-request Copilot code review)
 - [`jq`](https://jqlang.github.io/jq/), a JSON processor used to read and edit each tool's settings and MCP config files
 
 **Required only for optional steps:**
@@ -145,7 +145,7 @@ Beyond commands, `setup` installs user-level subagent definitions from [.claude/
 
 ### Explore
 
-Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in — a user-level agent with the same name overrides it, which the docs explicitly support — and pins exploration back to `haiku` at `effort: low` with read-only tools.
+Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in (a user-level agent with the same name overrides it, which the docs explicitly support) and pins exploration back to `haiku` at `effort: low` with read-only tools.
 
 Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. To remove it, delete `~/.claude/agents/Explore.md`.
 
@@ -207,7 +207,7 @@ REVIEWER_AGENT=codex
 
 Supported agents: `claude`, `codex`, `copilot`, `antigravity`, `kimi`. Only the agents you actually have installed need to be referenced.
 
-Two caveats for `kimi`: it takes its prompt as a command-line argument (there is no stdin form), so on Windows/Git Bash a very large prompt can exceed the OS argument limit — the same limitation Copilot has. And it has no per-run flag to disable MCP servers, so an autonomous loop run still loads whatever is configured in `~/.kimi-code/mcp.json`.
+Two caveats for `kimi`: it takes its prompt as a command-line argument (there is no stdin form), so on Windows/Git Bash a very large prompt can exceed the OS argument limit, the same limitation Copilot has. And it has no per-run flag to disable MCP servers, so an autonomous loop run still loads whatever is configured in `~/.kimi-code/mcp.json`.
 
 Both loops write their working files (`agent-code-review.md`, `agent-review-summary.md`, `feedback-plan.md`, `plan-review-summary.md`) to the target project's root. Consider adding those names to that project's `.gitignore` (or your global gitignore) so an agent never commits them by accident.
 
@@ -240,16 +240,16 @@ The setup script can configure [Model Context Protocol (MCP)](https://modelconte
 | --- | --- | --- |
 | [Playwright](https://github.com/microsoft/playwright-mcp) | `@playwright/mcp@latest` | Browser automation and web testing |
 
-MCP servers are added via each tool's `mcp add` CLI command at user scope. Tools without one (Copilot, Antigravity, Kimi Code) get their JSON config file edited directly — for Kimi that is `~/.kimi-code/mcp.json`, whose only built-in editor is the interactive `/mcp-config` TUI command.
+MCP servers are added via each tool's `mcp add` CLI command at user scope. Tools without one (Copilot, Antigravity, Kimi Code) get their JSON config file edited directly; for Kimi that is `~/.kimi-code/mcp.json`, whose only built-in editor is the interactive `/mcp-config` TUI command.
 
 ## `gh` Agent Skill
 
-Beyond the commands in this repo, `setup` can install the [`gh` agent skill published by `cli/cli`](https://github.com/cli/cli#agent-skills) for each selected tool. This is an **upstream** skill from the GitHub CLI team that teaches an agent to drive `gh` well — structured JSON output, pagination, repo targeting, search vs. list, and `gh api` fallback. It is unrelated to the commands/skills this repo ships.
+Beyond the commands in this repo, `setup` can install the [`gh` agent skill published by `cli/cli`](https://github.com/cli/cli#agent-skills) for each selected tool. This is an **upstream** skill from the GitHub CLI team that teaches an agent to drive `gh` well: structured JSON output, pagination, repo targeting, search vs. list, and `gh api` fallback. It is unrelated to the commands/skills this repo ships.
 
 For each agent you select, `setup` installs it when missing and updates it when already present:
 
-- Install — `gh skill install cli/cli gh --agent <id> --scope user`
-- Update — `gh skill update gh`
+- Install: `gh skill install cli/cli gh --agent <id> --scope user`
+- Update: `gh skill update gh`
 
 This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature), and for Kimi Code, which `gh skill` has no `--agent` id for. To manage it yourself:
 
@@ -259,7 +259,7 @@ gh skill update gh                                             # update (all hos
 gh skill list --agent claude-code                              # verify
 ```
 
-There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent — e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
+There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent, e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
 
 ## Impeccable Design Skills
 
@@ -286,7 +286,7 @@ See [impeccable.style](https://impeccable.style) for the full command list and t
 
 Commands are authored once as Claude Code command files; everything else is generated:
 
-1. Create `.claude/commands/command-name.md` — markdown with YAML front matter containing at least `description` (plus optional Claude-specific keys like `allowed-tools` or `argument-hint`), and an optional `$ARGUMENTS` placeholder in the body.
+1. Create `.claude/commands/command-name.md`, markdown with YAML front matter containing at least `description` (plus optional Claude-specific keys like `allowed-tools` or `argument-hint`), and an optional `$ARGUMENTS` placeholder in the body.
 2. If the command should also ship as a Codex/Copilot/Antigravity/Kimi skill, add its name to `SKILL_COMMANDS` in `tools/generate` (or `PROMPT_COMMANDS` if the review loops need it as a shared prompt).
 3. Run `tools/generate` to produce the derived `SKILL.md` and prompt files, and commit them together with the source.
 
@@ -299,8 +299,8 @@ procedure. Anthropic's [new rules of context engineering][ctx] are the house
 style here:
 
 - **Put the trigger in the `description`.** It is the only text a model sees
-  before deciding to load the skill, so say *when* to reach for it — and when to
-  reach for a sibling instead — not just what it does.
+  before deciding to load the skill, so say *when* to reach for it, and when to
+  reach for a sibling instead, not just what it does.
 - **Say it once.** If the body opens by restating the `description`, delete that
   line. Guidance belongs in exactly one place.
 - **Spend tokens on gotchas, not procedure.** Skip steps a competent model
@@ -309,7 +309,7 @@ style here:
   staged diff that still has staged files, which install hooks run automatically.
 - **Frame outcomes, not rules.** "Match the surrounding code" beats a list of
   banned constructs. Reserve hard constraints for the places where breaking them
-  breaks something — the review loops really do depend on the exact
+  breaks something: the review loops really do depend on the exact
   `NO_FURTHER_FEEDBACK` sentinel and on the reviewer never touching source files.
 - **Keep rubrics and output templates.** Structured criteria and worked report
   formats are references the model fills in, not rules that box it in.
@@ -349,7 +349,7 @@ test/run
 
 Unit tests (`test/run`) cover config parsing, prompt loading, validation, review status checks, and generated-file sync. They run in seconds and need no API keys.
 
-If you edit a command source in `.claude/commands/`, run `tools/generate` afterwards — the test suite and pre-commit both fail when the derived skill/prompt files are stale.
+If you edit a command source in `.claude/commands/`, run `tools/generate` afterwards; the test suite and pre-commit both fail when the derived skill/prompt files are stale.
 
 ### Smoke Tests
 

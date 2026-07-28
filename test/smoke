@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Smoke tests — run real AI agents to verify flag acceptance and basic I/O.
+# Smoke tests: run real AI agents to verify flag acceptance and basic I/O.
 #
 # Tests each installed agent as both editor (can it modify a file?) and
 # reviewer (can it produce a review file?).  Uses a temporary git repo with
@@ -88,7 +88,7 @@ if [[ ${#requested_agents[@]} -gt 0 ]]; then
             fi
         done
         if ! $found; then
-            echo "WARNING: '$req' is not installed — skipping"
+            echo "WARNING: '$req' is not installed, skipping"
         fi
     done
 else
@@ -152,12 +152,12 @@ FAIL=0
 RESULTS=()
 
 # Run a single smoke test.
-#   $1 — test name (for display)
-#   $2 — agent name
-#   $3 — prompt text
-#   $4 — tools (comma-separated, for Claude; ignored by others)
-#   $5 — verification function name (called after agent completes)
-#   $6 — fixture directory (agent runs here)
+#   $1: test name (for display)
+#   $2: agent name
+#   $3: prompt text
+#   $4: tools (comma-separated, for Claude; ignored by others)
+#   $5: verification function name (called after agent completes)
+#   $6: fixture directory (agent runs here)
 run_smoke_test() {
     local name="$1" agent="$2" prompt="$3" tools="$4" verify_fn="$5" fixture="$6"
 
@@ -216,8 +216,8 @@ run_smoke_test() {
     # Run the verification function
     local verify_result
     verify_result=$( "$verify_fn" "$fixture" 2>&1 ) || {
-        echo -e "  ${RED}FAIL${NC}     $name  (${elapsed}s) — $verify_result"
-        RESULTS+=("FAIL     $name  — $verify_result")
+        echo -e "  ${RED}FAIL${NC}     $name  (${elapsed}s): $verify_result"
+        RESULTS+=("FAIL     $name: $verify_result")
         ((FAIL++))
         return 1
     }
