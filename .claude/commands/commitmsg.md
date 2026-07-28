@@ -1,5 +1,5 @@
 ---
-description: "Propose a single git commit message for the currently staged changes. Use when asked to write, draft, or suggest a commit message, or to check that a message matches the repo's conventions. Proposes the message only — it does not commit."
+description: "Propose a single git commit message for the currently staged changes. Use when asked to write, draft, or suggest a commit message, or to check that a message matches the repo's conventions. Proposes the message only; it does not commit."
 allowed-tools: Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git branch:*)
 ---
 
@@ -9,10 +9,10 @@ allowed-tools: Bash(git diff:*), Bash(git status:*), Bash(git log:*), Bash(git b
 
 Run these commands to understand the changes:
 
-- `git diff --staged --stat` — the shape of the change; then `git diff --staged` (or per-file diffs) only for files whose purpose isn't clear from the stat
-- `git status -s` — staged file list
-- `git log -n 20 --oneline` — recent style and to avoid repetition
-- `git branch --show-current` — if it contains a ticket ID (e.g. ABC-123), prefix the subject line
+- `git diff --staged --stat`: the shape of the change; then `git diff --staged` (or per-file diffs) only for files whose purpose isn't clear from the stat
+- `git status -s`: staged file list
+- `git log -n 20 --oneline`: recent style and to avoid repetition
+- `git branch --show-current`: if it contains a ticket ID (e.g. ABC-123), prefix the subject line
 
 ## Rules
 

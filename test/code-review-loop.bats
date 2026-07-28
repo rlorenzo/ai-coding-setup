@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for bin/code-review-loop — argument parsing and validation.
+# Tests for bin/code-review-loop: argument parsing and validation.
 
 load test_helper
 

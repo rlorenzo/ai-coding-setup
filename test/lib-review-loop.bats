@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for lib/lib-review-loop — pure library functions.
+# Unit tests for lib/lib-review-loop: pure library functions.
 # Agent runner tests are in test/smoke (uses real CLI agents).
 
 load test_helper
@@ -241,6 +241,66 @@ EOF
     source_lib
     FEEDBACK_FILE="$TEST_TMPDIR/nonexistent.md"
     run test_reviewer_satisfied
+    assert_failure
+}
+
+# =========================================================================
+# Prompt/detector contract
+#
+# The loops terminate by grepping for a sentinel the shipped prompt tells the
+# agent to emit.  Rewording either side alone breaks the loop silently, so
+# feed each prompt's own sentinel to the detector that looks for it.
+# =========================================================================
+
+@test "code-review prompt states the verdict test_review_clean detects" {
+    source_lib
+    verdict=$(grep -m1 -o '\*\*Verdict:[^*]*\*\*' "$PROJECT_ROOT/prompts/code-review.md") \
+        || fail "prompts/code-review.md no longer states a **Verdict: ...** line"
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "$verdict" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "plan-review prompt states the sentinel test_reviewer_satisfied detects" {
+    source_lib
+    grep -qF 'NO_FURTHER_FEEDBACK' "$PROJECT_ROOT/prompts/plan-review.md" \
+        || fail "prompts/plan-review.md no longer names the NO_FURTHER_FEEDBACK sentinel"
+    FEEDBACK_FILE="$TEST_TMPDIR/feedback.md"
+    echo "NO_FURTHER_FEEDBACK" > "$FEEDBACK_FILE"
+    run test_reviewer_satisfied
+    assert_success
+}
+
+@test "test_review_clean accepts the verdict as a Summary bullet" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "- **Verdict: good to go**" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "test_review_clean rejects a verdict hedged with trailing prose" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "**Verdict: good to go, but 3 High findings remain**" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_failure
+}
+
+@test "test_review_clean accepts a verdict with a trailing period" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "**Verdict: good to go**." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "test_review_clean ignores a verdict quoted inside prose" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "The loop stops once the report says Verdict: good to go." > "$REVIEW_FILE"
+    run test_review_clean
     assert_failure
 }
 

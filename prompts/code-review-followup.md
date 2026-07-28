@@ -4,7 +4,7 @@ Re-review the currently staged changes in light of the developer's responses in 
 
 Constraints (same as the initial review):
 
-- You only read and analyze code — never modify any source files. `agent-code-review.md` is the only file you may write. Do not stage, commit, or push.
+- You only read and analyze code, never modifying any source files. `agent-code-review.md` is the only file you may write. Do not stage, commit, or push.
 - Review only staged changes, focusing on changed lines and minimal surrounding context.
 
 Rules:

@@ -85,6 +85,7 @@ fi
 # ---- paths ---------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
 FEEDBACK_FILE="$PROJECT_ROOT/feedback-plan.md"
+SUMMARY_FILE="$PROJECT_ROOT/plan-review-summary.md"
 if [[ "$PLAN_FILE" == /* || "$PLAN_FILE" == ?:* ]]; then
     PLAN_FILE_PATH="$PLAN_FILE"
 else
@@ -160,7 +161,7 @@ if [[ $local_exit -ne 0 ]]; then
 fi
 
 if [[ ! -f "$FEEDBACK_FILE" ]]; then
-    write_status "No feedback file created — $REVIEWER_AGENT may have failed" "$RED"
+    write_status "No feedback file created; $REVIEWER_AGENT may have failed" "$RED"
     echo ""
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${MAGENTA} Plan Review Loop Complete${NC}"
@@ -178,7 +179,7 @@ iteration_data+="$feedback_content"$'\n'
 # ---- Feedback loop -------------------------------------------------------
 while [[ $reviewer_iterations -lt $MAX_ITERATIONS ]]; do
     if test_reviewer_satisfied; then
-        write_status "$REVIEWER_AGENT is satisfied — no further feedback!" "$GREEN"
+        write_status "$REVIEWER_AGENT is satisfied: no further feedback!" "$GREEN"
         reviewer_satisfied=true
         break
     fi
@@ -236,7 +237,7 @@ IMPORTANT: Write ALL output (feedback or NO_FURTHER_FEEDBACK) to the file feedba
     cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
-        write_status "$REVIEWER_AGENT follow-up failed (exit $local_exit) — aborting review loop" "$YELLOW"
+        write_status "$REVIEWER_AGENT follow-up failed (exit $local_exit), aborting review loop" "$YELLOW"
         break
     fi
 
@@ -273,6 +274,9 @@ write_status "Plan diff saved for summary agent" "$DIM"
 
 # ---- Editor writes the improvement summary --------------------------------
 write_step "Final" "$EDITOR_AGENT: Writing plan improvement summary"
+# Clear any summary left by a previous run so the post-run existence check
+# below reflects this run, not a stale artifact
+rm -f "$SUMMARY_FILE" 2>/dev/null || true
 
 if $reviewer_satisfied; then
     reviewer_status_label="satisfied"
@@ -304,7 +308,7 @@ $final_feedback
 
 ## Instructions for the summary
 
-Your job is to summarize what the REVIEW LOOP changed in the plan — use the diff above as the primary source of truth.
+Your job is to summarize what the REVIEW LOOP changed in the plan; use the diff above as the primary source of truth.
 
 Write plan-review-summary.md with this structure:
 
@@ -320,6 +324,13 @@ Do not create any other files. Do not stage or commit anything."
 local_exit=0
 run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
 
+if [[ $local_exit -ne 0 ]]; then
+    write_status "$EDITOR_AGENT summary generation exited with code $local_exit" "$YELLOW"
+fi
+if [[ ! -f "$SUMMARY_FILE" ]]; then
+    write_status "No summary file created; $EDITOR_AGENT may have failed" "$YELLOW"
+fi
+
 # ---- Cleanup intermediate files -----------------------------------------
 # Only remove feedback file when it contains no valid content (NO_FURTHER_FEEDBACK)
 if $reviewer_satisfied; then
@@ -334,9 +345,9 @@ echo -e "${MAGENTA}========================================${NC}"
 echo ""
 
 if $reviewer_satisfied; then
-    echo -e " Reviewer : ${GREEN}$REVIEWER_AGENT — SATISFIED (NO_FURTHER_FEEDBACK)  [$reviewer_iterations iteration(s)]${NC}"
+    echo -e " Reviewer : ${GREEN}$REVIEWER_AGENT: SATISFIED (NO_FURTHER_FEEDBACK)  [$reviewer_iterations iteration(s)]${NC}"
 else
-    echo -e " Reviewer : ${YELLOW}$REVIEWER_AGENT — MAX ITERATIONS ($MAX_ITERATIONS)  [$reviewer_iterations iteration(s)]${NC}"
+    echo -e " Reviewer : ${YELLOW}$REVIEWER_AGENT: MAX ITERATIONS ($MAX_ITERATIONS)  [$reviewer_iterations iteration(s)]${NC}"
 fi
 
 echo ""
@@ -344,6 +355,10 @@ echo " Duration : $elapsed_display"
 echo " Editor   : $EDITOR_AGENT"
 echo -e " Plan     : $PLAN_FILE"
 [[ -f "$FEEDBACK_FILE" ]] && echo -e " Feedback : feedback-plan.md"
-echo -e " Summary  : plan-review-summary.md"
+if [[ -f "$SUMMARY_FILE" ]]; then
+    echo -e " Summary  : plan-review-summary.md"
+else
+    echo -e " Summary  : ${YELLOW}not created${NC}"
+fi
 echo ""
 echo -e "${CYAN}Review the improved plan and summary.${NC}"

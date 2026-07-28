@@ -40,7 +40,7 @@ PROMPTS_DIR="${AI_CODING_SETUP_PROMPTS_DIR:-$HOME/.local/share/ai-coding-setup/p
 # Valid agent names for --editor / --reviewer flags
 VALID_AGENTS="claude codex copilot antigravity kimi"
 
-# Filenames that review loops create — never treat as agent artifacts
+# Filenames that review loops create; never treat as agent artifacts
 KNOWN_REVIEW_FILES="agent-code-review.md agent-review-summary.md feedback-plan.md plan-review-summary.md"
 
 # ---- output helpers -------------------------------------------------------
@@ -83,7 +83,7 @@ read_prompt_file() {
 
 # Load agent defaults from ~/.ai-coding-setup.conf.
 # Only sets EDITOR_AGENT / REVIEWER_AGENT if not already overridden by CLI.
-# Uses safe line-by-line parsing — never sources the file directly.
+# Uses safe line-by-line parsing; never sources the file directly.
 # shellcheck disable=SC2034  # variables are used by sourcing scripts
 load_config() {
     local config_file="$HOME/.ai-coding-setup.conf"
@@ -123,8 +123,8 @@ validate_agent_name() {
 # ---- input validation ----------------------------------------------------
 
 # Validate that a value is a positive integer (for --max-iterations).
-#   $1 — value to check
-#   $2 — flag name (for error message)
+#   $1: value to check
+#   $2: flag name (for error message)
 validate_positive_int() {
     local value="$1" flag="$2"
     if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
@@ -137,11 +137,11 @@ validate_positive_int() {
 
 # Run Claude Code with a prompt and optional tool restrictions.
 # Disables all MCP servers to keep autonomous runs scoped to local work.
-# Pipes the prompt via stdin — passing it as an argv on Windows/MSYS hits the
-# OS exec limit (~32 KB) and fails with "Argument list too long" for large
+# Pipes the prompt via stdin, since passing it as an argv on Windows/MSYS hits
+# the OS exec limit (~32 KB) and fails with "Argument list too long" for large
 # prompts (e.g. the final review-loop summary).
-#   $1 — prompt text
-#   $2 — comma-separated allowed tools (default: Edit,Read,Write,Bash,Grep,Glob)
+#   $1: prompt text
+#   $2: comma-separated allowed tools (default: Edit,Read,Write,Bash,Grep,Glob)
 run_claude() {
     local prompt="$1"
     local tools="${2:-Edit,Read,Write,Bash,Grep,Glob}"
@@ -151,7 +151,7 @@ run_claude() {
 
 # Run Codex CLI with a prompt.  Wraps the prompt with a preamble that prevents
 # conversational output, and disables MCP servers to avoid artifact creation.
-#   $1 — prompt text
+#   $1: prompt text
 run_codex() {
     local prompt="$1"
     local wrapped="Execute the following task now. Do not introduce yourself. Begin immediately.
@@ -166,7 +166,7 @@ $prompt"
 # -p value disables stdin reading, and whitespace-only -p values are rejected
 # as an empty prompt. A piped stdin prompt alone still enters print mode.
 # --print-timeout raises the 5m print-mode default; reviews can run longer.
-#   $1 — prompt text
+#   $1: prompt text
 run_antigravity() {
     local prompt="$1"
     printf '%s' "$prompt" | agy --dangerously-skip-permissions --add-dir "$PWD" --print-timeout 30m
@@ -180,9 +180,9 @@ run_antigravity() {
 # hits the OS exec limit (~32 KB) for very large prompts (e.g. the final
 # review-loop summary) and fails with "Argument list too long". Unlike the
 # other agents, Copilot does not currently support reading the prompt from
-# stdin — `copilot -p` ignores stdin, and bare stdin is interpreted as CLI
+# stdin: `copilot -p` ignores stdin, and bare stdin is interpreted as CLI
 # options rather than as a prompt. See github/copilot-cli#683 and #1046.
-#   $1 — prompt text
+#   $1: prompt text
 run_copilot() {
     local prompt="$1"
     local -a mcp_flags=(--disable-builtin-mcps)
@@ -199,15 +199,15 @@ run_copilot() {
 # `-p` is already fully unattended: kimi rejects --yolo/--auto alongside
 # --prompt because non-interactive runs use auto permission mode by default.
 #
-# KNOWN LIMITATION: as with Copilot, the prompt is passed as an argv — kimi's
-# -p takes the prompt as a flag value and has no stdin form — so on Windows/MSYS
+# KNOWN LIMITATION: as with Copilot, the prompt is passed as an argv. kimi's
+# -p takes the prompt as a flag value and has no stdin form, so on Windows/MSYS
 # very large prompts (e.g. the final review-loop summary) can hit the OS exec
 # limit (~32 KB) and fail with "Argument list too long".
 #
 # Kimi has no flag to disable configured MCP servers for a single run, so
 # unlike the other agents an autonomous run still loads whatever is in
 # ~/.kimi-code/mcp.json.
-#   $1 — prompt text
+#   $1: prompt text
 run_kimi() {
     local prompt="$1"
     kimi -p "$prompt"
@@ -215,7 +215,7 @@ run_kimi() {
 
 # Map an agent name to its CLI command (most agents share the name, but
 # Antigravity ships as `agy`).
-#   $1 — agent name
+#   $1: agent name
 agent_command() {
     case "$1" in
         antigravity) echo "agy" ;;
@@ -224,9 +224,9 @@ agent_command() {
 }
 
 # Dispatch to the appropriate agent runner.
-#   $1 — agent name ("claude", "codex", "copilot", "antigravity", or "kimi")
-#   $2 — prompt text
-#   $3 — allowed tools (only used by Claude; ignored by others)
+#   $1: agent name ("claude", "codex", "copilot", "antigravity", or "kimi")
+#   $2: prompt text
+#   $3: allowed tools (only used by Claude; ignored by others)
 run_agent() {
     local agent="$1" prompt="$2" tools="${3:-}"
     case "$agent" in
@@ -261,7 +261,7 @@ validate_tools() {
 }
 
 # Validate that required prompt files exist.
-#   $@ — list of prompt file paths to check
+#   $@: list of prompt file paths to check
 validate_prompts() {
     local missing=()
     local f
@@ -291,9 +291,12 @@ test_review_clean() {
     local content
     content=$(<"$REVIEW_FILE")
 
-    # Only an explicit "Verdict: good to go" line signals clean — a bare
-    # substring match could false-positive on "not good to go"
-    if echo "$content" | grep -qiE "verdict[[:space:]]*:[[:space:]]*good to go"; then
+    # Only a verdict line of its own signals clean.  Emphasis is stripped so
+    # "**Verdict: good to go**" and "**Verdict:** good to go" both match; the
+    # anchors keep both quoting prose ("the report says Verdict: good to go")
+    # and hedged prose ("Verdict: good to go, but ...") from counting.
+    if printf '%s\n' "$content" | tr -d '*' \
+        | grep -qiE '^[[:space:]]*([-+][[:space:]]*)?verdict[[:space:]]*:[[:space:]]*good to go[[:space:]]*[.!]?[[:space:]]*$'; then
         return 0
     fi
 
@@ -328,11 +331,11 @@ test_reviewer_satisfied() {
 }
 
 # Build the improvement prompt for the plan editor.
-#   $1 — plan file path
-#   $2 — feedback file path
-#   $3 — reviewer agent name
-#   $4 — current cycle number
-#   $5 — max cycles
+#   $1: plan file path
+#   $2: feedback file path
+#   $3: reviewer agent name
+#   $4: current cycle number
+#   $5: max cycles
 build_improvement_prompt() {
     local plan_path="$1" feedback_path="$2" reviewer_name="$3" cycle="$4" max_cycles="$5"
     cat <<PROMPT
@@ -379,7 +382,7 @@ PROMPT
 # ---- temp directory with cleanup -----------------------------------------
 
 # Create a temp directory and register a cleanup trap.
-#   $1 — prefix for the temp directory name (e.g. "code-review-loop")
+#   $1: prefix for the temp directory name (e.g. "code-review-loop")
 # Sets: TMPDIR_REVIEW
 TMPDIR_REVIEW=""
 
@@ -395,7 +398,7 @@ cleanup_temp() {
 # ---- elapsed time --------------------------------------------------------
 
 # Compute human-readable elapsed time from a start timestamp.
-#   $1 — start time (epoch seconds, from `date +%s`)
+#   $1: start time (epoch seconds, from `date +%s`)
 # Prints: "Xm Ys"
 format_elapsed() {
     local start="$1"
@@ -416,11 +419,11 @@ snapshot_untracked() {
 
 # Remove files that appeared during an agent run (artifacts), excluding known
 # review files.  Only Codex creates artifacts; for other agents this is a no-op.
-# Editor runs are always skipped — new files from the editor (tests, helpers)
+# Editor runs are always skipped: new files from the editor (tests, helpers)
 # are legitimate changes that stage_review_changes will pick up.
-#   $1 — agent name
-#   $2 — path to the pre-run snapshot file
-#   $3 — role ("editor" or "reviewer")
+#   $1: agent name
+#   $2: path to the pre-run snapshot file
+#   $3: role ("editor" or "reviewer")
 cleanup_agent_artifacts() {
     local agent="$1" before_file="$2" role="${3:-reviewer}"
 

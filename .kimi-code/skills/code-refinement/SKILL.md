@@ -1,6 +1,6 @@
 ---
 name: code-refinement
-description: "Review staged files for code quality (KISS, DRY, YAGNI, Clean Code) and fix linting issues. Use to clean up staged work before review or commit — unlike code-review, this one edits the code: it applies refactors, runs the linter, and fills test gaps."
+description: "Review staged files for code quality (KISS, DRY, YAGNI, Clean Code) and fix linting issues. Use to clean up staged work before review or commit. Unlike code-review, this one edits the code: it applies refactors, runs the linter, and fills test gaps."
 ---
 
 # Code Refinement

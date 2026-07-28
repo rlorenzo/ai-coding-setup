@@ -45,15 +45,15 @@ gh api graphql --paginate --slurp \
 
 **Auto-resolve:** If a thread's first comment body matches any `$IGNORED_FILE` entry (`grep -qxF`), resolve via `resolveReviewThread` mutation without classifying.
 
-If unresolved threads remain → step 3. Do NOT re-request a bot review while threads are still open — process existing feedback first. Only when zero unresolved threads remain → step 5.
+If unresolved threads remain → step 3. Do NOT re-request a bot review while threads are still open; process existing feedback first. Only when zero unresolved threads remain → step 5.
 
 ### 3. Classify and resolve
 
 Read referenced file + context for each remaining thread, then classify:
 
-- **Already addressed / Informational / Inaccurate** — append body to `$IGNORED_FILE`, resolve (reply with brief explanation if inaccurate).
-- **Valid fix** — implement minimal change. Must meet ALL: (1) fixes a real bug — wrong behavior, data loss, security, crash, or race condition; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
-- **Nitpick / Low-value** — resolve WITHOUT implementing. Includes: style preferences not enforced by linter, docstring suggestions on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append body to `$IGNORED_FILE`, reply with one-line rationale, resolve.
+- **Already addressed / Informational / Inaccurate**: append body to `$IGNORED_FILE`, resolve (reply with brief explanation if inaccurate).
+- **Valid fix**: implement minimal change. Must meet ALL: (1) fixes a real bug (wrong behavior, data loss, security, crash, or race condition); (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
+- **Nitpick / Low-value**: resolve WITHOUT implementing. Includes: style preferences not enforced by linter, docstring suggestions on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append body to `$IGNORED_FILE`, reply with one-line rationale, resolve.
 
 ### 4. Push fixes
 
@@ -61,34 +61,52 @@ Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed th
 
 ### 5. Ensure bot review covers latest commit
 
-Only reached when zero unresolved threads remain. Get HEAD SHA: `gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid'`. Bots = logins ending in `[bot]`. Fetch their latest reviews:
+Each bot's latest review, and the commit it covers:
 
 ```bash
-gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-  --jq '[.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login) | map(max_by(.submitted_at))'
+head_sha=$(gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid')
+
+latest() { gh api --paginate --slurp repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
+  | jq -r 'add | [.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login)
+           | map(max_by(.submitted_at)) | .[] | "\(.user.login) \(.commit_id)"'; }
+
+stale=$(latest | grep -v " $head_sha$" | cut -d' ' -f1 | sort -u)
 ```
 
-If a bot's latest review already covers HEAD → success. Stop.
+`/reviews` alone identifies the review bots; CI and deploy bots never appear there. `--slurp` piped to `jq`, not `--jq`: under `--paginate` a `--jq` filter runs per page, so `max_by` returns a per-page max and lists a long-running PR's bots twice.
 
-Otherwise, re-request and poll (first check 8 min, timeout 15 min, poll 60 s). `gh pr edit --add-reviewer` re-requests reviews from existing bot reviewers — do not skip this.
+Empty `stale` → every bot already covers `head_sha`, success, stop. Otherwise re-trigger each login in `stale`; they do not re-review a push on their own.
+
+| Bot | Login | Re-trigger with |
+| --- | --- | --- |
+| Copilot | `copilot-pull-request-reviewer[bot]` | `gh pr edit {PR_NUMBER} --add-reviewer @copilot` |
+| CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
+| Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
+
+- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm Copilot specifically, not just that some reviewer is pending: `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login' | grep -qiE '^(Copilot|copilot-pull-request-reviewer\[bot\])$'`. A miss means it did not take, and the poll below would burn its full timeout waiting. Match both spellings: `requested_reviewers` returns the login as `Copilot`, while the review it later submits carries `copilot-pull-request-reviewer[bot]`, so checking only the `[bot]` form reports failure on every successful request.
+- App-based bots (CodeRabbit, Greptile) cannot be requested as reviewers at all; a mention is their only trigger. `@coderabbitai full review` re-reviews the whole diff rather than just new commits.
+- **Bot not in the table, or none found** → ask the user for the exact trigger. Never guess a mention string: a wrong one posts a visible no-op comment.
+
+Poll until every triggered bot covers `head_sha`. Set `triggered` to the logins you actually fired, one per line, dropping any you could not trigger:
 
 ```bash
-bot_logins=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-  --jq '[.[] | select(.user.login | endswith("[bot]")) | .user.login] | unique | .[]')
+triggered="$stale"   # minus any bot you could not trigger
 
-for bot in $bot_logins; do
-  gh pr edit {PR_NUMBER} --add-reviewer "$bot"
-done
+# Never poll on an empty set: comm would report nothing pending and the loop
+# would break on the first pass, declaring success without waiting.
+[ -n "$triggered" ] || { echo "nothing was triggered"; exit 1; }
 
 end=$((SECONDS+900)); sleep 480
 while [ $SECONDS -lt $end ]; do
-  commit_id=$(gh api repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
-    --jq '[.[] | select(.user.login=="{bot}")] | max_by(.submitted_at) | .commit_id')
-  [ "$commit_id" = "$head_sha" ] && break
+  pending=$(comm -23 <(printf '%s\n' "$triggered" | sort -u) \
+                    <(latest | grep " $head_sha$" | cut -d' ' -f1 | sort -u))
+  [ -z "$pending" ] && break
   sleep 60
 done
 ```
 
-Timeout → tell user to re-run this command and stop. Success → go back to step 2.
+Run both blocks in one shell: `head_sha` and `latest` do not survive separate tool calls. If your harness blocks foreground `sleep`, run the whole wait as one backgrounded command rather than sleeping between tool calls.
 
-Declare success when step 2 finds zero unresolved threads AND step 5 confirms a bot review on HEAD. Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.
+Timeout → name the bots still pending, tell user to re-run this command, stop. Success → go back to step 2.
+
+Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.
