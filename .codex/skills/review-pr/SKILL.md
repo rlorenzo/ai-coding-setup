@@ -83,7 +83,7 @@ Empty `stale` → every bot already covers `head_sha`, success, stop. Otherwise 
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm Copilot specifically, not just that some reviewer is pending: `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login' | grep -qx 'copilot-pull-request-reviewer\[bot\]'`. A miss means it did not take, and the poll below would burn its full timeout waiting.
+- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm Copilot specifically, not just that some reviewer is pending: `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login' | grep -qiE '^(Copilot|copilot-pull-request-reviewer\[bot\])$'`. A miss means it did not take, and the poll below would burn its full timeout waiting. Match both spellings: `requested_reviewers` returns the login as `Copilot`, while the review it later submits carries `copilot-pull-request-reviewer[bot]`, so checking only the `[bot]` form reports failure on every successful request.
 - App-based bots (CodeRabbit, Greptile) cannot be requested as reviewers at all; a mention is their only trigger. `@coderabbitai full review` re-reviews the whole diff rather than just new commits.
 - **Bot not in the table, or none found** → ask the user for the exact trigger. Never guess a mention string: a wrong one posts a visible no-op comment.
 
