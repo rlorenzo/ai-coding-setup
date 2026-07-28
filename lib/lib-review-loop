@@ -292,10 +292,11 @@ test_review_clean() {
     content=$(<"$REVIEW_FILE")
 
     # Only a verdict line of its own signals clean.  Emphasis is stripped so
-    # "**Verdict: good to go**" and "**Verdict:** good to go" both match, and
-    # the ^ anchor keeps prose that merely quotes the marker from counting.
+    # "**Verdict: good to go**" and "**Verdict:** good to go" both match; the
+    # anchors keep both quoting prose ("the report says Verdict: good to go")
+    # and hedged prose ("Verdict: good to go, but ...") from counting.
     if printf '%s\n' "$content" | tr -d '*' \
-        | grep -qiE '^[[:space:]]*([-+][[:space:]]*)?verdict[[:space:]]*:[[:space:]]*good to go'; then
+        | grep -qiE '^[[:space:]]*([-+][[:space:]]*)?verdict[[:space:]]*:[[:space:]]*good to go[[:space:]]*[.!]?[[:space:]]*$'; then
         return 0
     fi
 

@@ -280,6 +280,22 @@ EOF
     assert_success
 }
 
+@test "test_review_clean rejects a verdict hedged with trailing prose" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "**Verdict: good to go, but 3 High findings remain**" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_failure
+}
+
+@test "test_review_clean accepts a verdict with a trailing period" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "**Verdict: good to go**." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
 @test "test_review_clean ignores a verdict quoted inside prose" {
     source_lib
     REVIEW_FILE="$TEST_TMPDIR/review.md"
