@@ -264,13 +264,28 @@ EOF
 
 @test "plan-review prompt states the sentinel test_reviewer_satisfied detects" {
     source_lib
-    # shellcheck disable=SC2016  # the backticks are literal regex, not a subshell
-    sentinel=$(grep -m1 -oE '`[A-Z_]{4,}`' "$PROJECT_ROOT/prompts/plan-review.md") \
-        || fail "prompts/plan-review.md no longer names an all-caps sentinel"
+    grep -qF 'NO_FURTHER_FEEDBACK' "$PROJECT_ROOT/prompts/plan-review.md" \
+        || fail "prompts/plan-review.md no longer names the NO_FURTHER_FEEDBACK sentinel"
     FEEDBACK_FILE="$TEST_TMPDIR/feedback.md"
-    echo "${sentinel//\`/}" > "$FEEDBACK_FILE"
+    echo "NO_FURTHER_FEEDBACK" > "$FEEDBACK_FILE"
     run test_reviewer_satisfied
     assert_success
+}
+
+@test "test_review_clean accepts the verdict as a Summary bullet" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "- **Verdict: good to go**" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "test_review_clean ignores a verdict quoted inside prose" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "The loop stops once the report says Verdict: good to go." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_failure
 }
 
 @test "build_improvement_prompt includes all parameters" {

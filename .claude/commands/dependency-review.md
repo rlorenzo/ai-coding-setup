@@ -96,7 +96,7 @@ Present the full review as a structured report:
 - **New dependencies** (not just version bumps): same five checks, plus verify it is the intended package (compare against similarly named popular ones for typosquatting) and review maintenance health: last commit date, maintainer count, bus factor.
 - **Lockfile-only changes** with no manifest change: still review the transitive packages that changed, though a lighter touch is acceptable for patch-level bumps in well-known packages.
 - **Monorepo groups** (`@babel/*`, `@angular/*`): treat as one coordinated release, which reduces but does not eliminate individual diff review.
-- **Private/internal packages:** the publication age gate may not apply; diff verification and breaking change checks still do.
+- **Private/internal packages:** the publication age gate may not apply; diff verification and breaking change checks still do. Never send internal package names or versions to public registry or advisory endpoints. Query the private registry where it exposes an API, otherwise mark those checks **SKIPPED** with the reason.
 
 ## Priorities
 

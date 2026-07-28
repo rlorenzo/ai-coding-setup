@@ -69,11 +69,13 @@ head_sha=$(gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid')
 latest() { gh api --paginate --slurp repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
   | jq -r 'add | [.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login)
            | map(max_by(.submitted_at)) | .[] | "\(.user.login) \(.commit_id)"'; }
+
+stale=$(latest | grep -v " $head_sha$" | cut -d' ' -f1 | sort -u)
 ```
 
 `/reviews` alone identifies the review bots; CI and deploy bots never appear there. `--slurp` piped to `jq`, not `--jq`: under `--paginate` a `--jq` filter runs per page, so `max_by` returns a per-page max and lists a long-running PR's bots twice.
 
-All on `head_sha` → success, stop. Otherwise re-trigger each stale bot; they do not re-review a push on their own.
+Empty `stale` → every bot already covers `head_sha`, success, stop. Otherwise re-trigger each login in `stale`; they do not re-review a push on their own.
 
 | Bot | Login | Re-trigger with |
 | --- | --- | --- |
@@ -81,13 +83,19 @@ All on `head_sha` → success, stop. Otherwise re-trigger each stale bot; they d
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm with `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login'`; empty means it did not take, and the poll below would burn its full timeout waiting.
+- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm Copilot specifically, not just that some reviewer is pending: `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login' | grep -qx 'copilot-pull-request-reviewer\[bot\]'`. A miss means it did not take, and the poll below would burn its full timeout waiting.
 - App-based bots (CodeRabbit, Greptile) cannot be requested as reviewers at all; a mention is their only trigger. `@coderabbitai full review` re-reviews the whole diff rather than just new commits.
 - **Bot not in the table, or none found** → ask the user for the exact trigger. Never guess a mention string: a wrong one posts a visible no-op comment.
 
-Poll until every triggered bot covers `head_sha`, `triggered` holding the logins you re-triggered:
+Poll until every triggered bot covers `head_sha`. Set `triggered` to the logins you actually fired, one per line, dropping any you could not trigger:
 
 ```bash
+triggered="$stale"   # minus any bot you could not trigger
+
+# Never poll on an empty set: comm would report nothing pending and the loop
+# would break on the first pass, declaring success without waiting.
+[ -n "$triggered" ] || { echo "nothing was triggered"; exit 1; }
+
 end=$((SECONDS+900)); sleep 480
 while [ $SECONDS -lt $end ]; do
   pending=$(comm -23 <(printf '%s\n' "$triggered" | sort -u) \

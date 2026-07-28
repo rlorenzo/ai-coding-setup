@@ -291,9 +291,11 @@ test_review_clean() {
     local content
     content=$(<"$REVIEW_FILE")
 
-    # Only an explicit "Verdict: good to go" line signals clean; a bare
-    # substring match could false-positive on "not good to go"
-    if echo "$content" | grep -qiE "verdict[[:space:]]*:[[:space:]]*good to go"; then
+    # Only a verdict line of its own signals clean.  Emphasis is stripped so
+    # "**Verdict: good to go**" and "**Verdict:** good to go" both match, and
+    # the ^ anchor keeps prose that merely quotes the marker from counting.
+    if printf '%s\n' "$content" | tr -d '*' \
+        | grep -qiE '^[[:space:]]*([-+][[:space:]]*)?verdict[[:space:]]*:[[:space:]]*good to go'; then
         return 0
     fi
 
