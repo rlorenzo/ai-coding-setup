@@ -139,6 +139,18 @@ The skill also pins the model explicitly on every spawn (since Claude Code v2.1.
 - Antigravity CLI: `/efficient-orchestration`
 - Kimi Code CLI: `/skill:efficient-orchestration`
 
+### /git-history-cleanup
+
+Rewrite a feature branch's git history into focused, logical commits before review or merge. It surveys the branch's commits past the merge base, folds review-response, fixup, WIP, and lint-fix noise into the substantive commits they amend, and reorders the result so each commit is reviewable on its own and `git blame` stays meaningful. Refuses to run on `main` or other long-lived branches, creates a backup branch before rewriting, and verifies the final tree is byte-identical to the original tip. Once verified it force-pushes with `--force-with-lease` (never bare `--force`) and deletes the backup branch; on any failure the backup is kept so the original history is never lost.
+
+**Usage:**
+
+- Claude Code: `/git-history-cleanup [BRANCH]`
+- Codex CLI: `$git-history-cleanup [BRANCH]`
+- Copilot CLI: `/git-history-cleanup [BRANCH]`
+- Antigravity CLI: `/git-history-cleanup [BRANCH]`
+- Kimi Code CLI: `/skill:git-history-cleanup [BRANCH]`
+
 ## Claude Code Agents
 
 Beyond commands, `setup` installs user-level subagent definitions from [.claude/agents/](.claude/agents/) to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
