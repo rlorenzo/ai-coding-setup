@@ -175,6 +175,11 @@ trap cleanup_temp EXIT
 RUN_LOG_ROOT="${CODE_REVIEW_LOOP_LOG_DIR:-$HOME/.cache/code-review-loop}"
 RUN_LOG_DIR=$(claim_run_log_dir "$RUN_LOG_ROOT")
 
+# Only the default location is pruned; a directory the user named is theirs.
+if [[ -z "${CODE_REVIEW_LOOP_LOG_DIR:-}" ]]; then
+    pruned=$(prune_run_logs "$RUN_LOG_ROOT") || true
+fi
+
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
 echo -e "${MAGENTA} Code Review Loop${NC}"
@@ -184,6 +189,7 @@ echo " Skip refinement: $SKIP_REFINEMENT"
 echo " Editor         : $EDITOR_AGENT"
 echo " Reviewer       : $REVIEWER_AGENT"
 echo " Logs           : $RUN_LOG_DIR"
+[[ -n "${pruned:-}" ]] && echo " Pruned         : $pruned run log(s) older than a day"
 
 start_time=$(date +%s)
 

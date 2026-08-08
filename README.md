@@ -208,6 +208,8 @@ final-summary.claude.log
 
 Each records the agent, the tools it was allowed, its combined stdout and stderr, and its exit code. This is the difference between "it failed" and knowing why: a loop that stops with a bare `Execution error` on the terminal leaves nothing else behind, and a run started in the background does not even have the scrollback. Note that an agent failing does not stop the loop; it logs the failure and carries on, so the log is often the only sign a step went wrong.
 
+Logs are kept for **one day** and older runs are pruned at startup. Retention is by age rather than by count because the loop tends to be run several times in a sitting, and what you come back for is today's failure. Override with `REVIEW_LOOP_LOG_DAYS`, or set `CODE_REVIEW_LOOP_LOG_DIR` to keep logs somewhere of your own, which opts out of pruning entirely.
+
 ### plan-review-loop
 
 Iteratively improves a **plan document** through review feedback:
@@ -245,7 +247,8 @@ Environment variables:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `CODE_REVIEW_LOOP_LOG_DIR` | `~/.cache/code-review-loop` | The directory `code-review-loop` writes its per-run log directories under. |
+| `CODE_REVIEW_LOOP_LOG_DIR` | `~/.cache/code-review-loop/<timestamp>` | Where `code-review-loop` writes its run logs. Setting it also turns off log pruning, on the grounds that a directory you named is yours to manage. |
+| `REVIEW_LOOP_LOG_DAYS` | `1` | Delete run logs older than this many days. Only applies to the default location. |
 | `AI_CODING_SETUP_PROMPTS_DIR` | `~/.local/share/ai-coding-setup/prompts` | Where the loops read their prompts from. |
 
 ### Shared prompts

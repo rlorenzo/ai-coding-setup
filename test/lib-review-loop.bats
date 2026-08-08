@@ -398,6 +398,97 @@ stub_agent() { # stub_agent <exit-code> <stdout-line> [stderr-line]
     [ -f "$BATS_TEST_TMPDIR/deep/nested/dir/step.log" ]
 }
 
+# =========================================================================
+# Run log retention
+# =========================================================================
+
+make_run_dir() { # make_run_dir <root> <name> <days-old>
+    local dir="$1/$2"
+    mkdir -p "$dir"
+    echo "log" > "$dir/step.log"
+    if [ "$3" -gt 0 ]; then
+        # touch -A/-d differ across platforms; -t with a computed stamp is portable.
+        local stamp
+        stamp=$(date -v "-$3d" '+%Y%m%d%H%M' 2>/dev/null) \
+            || stamp=$(date -d "$3 days ago" '+%Y%m%d%H%M')
+        touch -t "$stamp" "$dir"
+    fi
+}
+
+@test "prune_run_logs also deletes a suffixed run directory" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    # A run that lost the claim race is named <stamp>-XXXXXX and must not
+    # outlive the plain ones just because of its suffix.
+    make_run_dir "$root" 20260101-120000-a1b2c3 5
+    make_run_dir "$root" 20260807-120000-d4e5f6 0
+    run prune_run_logs "$root"
+    assert_output "1"
+    [ ! -d "$root/20260101-120000-a1b2c3" ]
+    [ -d "$root/20260807-120000-d4e5f6" ]
+}
+
+@test "prune_run_logs deletes runs older than a day and keeps today's" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 5
+    make_run_dir "$root" 20260102-120000 3
+    make_run_dir "$root" 20260807-120000 0
+    run prune_run_logs "$root"
+    assert_output "2"
+    [ ! -d "$root/20260101-120000" ]
+    [ ! -d "$root/20260102-120000" ]
+    [ -d "$root/20260807-120000" ]
+}
+
+@test "prune_run_logs leaves everything when nothing is old enough" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260807-120000 0
+    make_run_dir "$root" 20260807-130000 0
+    run prune_run_logs "$root"
+    assert_output ""
+    [ -d "$root/20260807-120000" ]
+    [ -d "$root/20260807-130000" ]
+}
+
+@test "prune_run_logs ignores directories that are not run stamps" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    mkdir -p "$root/backups" "$root/notes"
+    echo keep > "$root/backups/original.sh"
+    touch -t 202001010000 "$root/backups" "$root/notes"
+    make_run_dir "$root" 20260101-120000 5
+    run prune_run_logs "$root"
+    assert_output "1"
+    # Anything a user keeps alongside the run dirs is not ours to delete.
+    [ -f "$root/backups/original.sh" ]
+    [ -d "$root/notes" ]
+}
+
+@test "prune_run_logs honours a custom retention in days" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 10
+    make_run_dir "$root" 20260102-120000 3
+    run prune_run_logs "$root" 7
+    assert_output "1"
+    [ ! -d "$root/20260101-120000" ]
+    [ -d "$root/20260102-120000" ]
+}
+
+@test "prune_run_logs is a no-op on a missing or invalid target" {
+    source_lib
+    run prune_run_logs "$BATS_TEST_TMPDIR/nope"
+    assert_success
+    assert_output ""
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 5
+    run prune_run_logs "$root" "not-a-number"
+    assert_output ""
+    [ -d "$root/20260101-120000" ]
+}
+
 @test "cleanup_agent_artifacts does not delete run logs inside the repo" {
     source_lib
     cd "$BATS_TEST_TMPDIR"
