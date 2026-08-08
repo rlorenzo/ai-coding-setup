@@ -326,3 +326,235 @@ EOF
     # Allow for 1-second clock skew between date calls
     assert_output --regexp "^2m [56]s$"
 }
+
+# =========================================================================
+# Agent output logging
+#
+# run_agent dispatches to a real CLI, so these stub one onto PATH and assert
+# only the wrapper's own behaviour: that it mirrors output, and that it hands
+# back the agent's exit code rather than tee's.
+# =========================================================================
+
+stub_agent() { # stub_agent <exit-code> <stdout-line> [stderr-line]
+    local dir="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$dir"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'cat >/dev/null'
+        printf 'echo %q\n' "$2"
+        [ -n "${3:-}" ] && printf 'echo %q >&2\n' "$3"
+        echo "exit $1"
+    } > "$dir/claude"
+    chmod +x "$dir/claude"
+    PATH="$dir:$PATH"
+}
+
+@test "run_agent without AGENT_LOG passes output through and writes no file" {
+    source_lib
+    stub_agent 0 "refined the code"
+    unset AGENT_LOG
+    run run_agent claude "a prompt" "Read"
+    assert_success
+    assert_output --partial "refined the code"
+    [ -z "$(find "$BATS_TEST_TMPDIR" -name '*.log' -print -quit)" ]
+}
+
+@test "run_agent mirrors output to AGENT_LOG and records the exit code" {
+    source_lib
+    stub_agent 0 "refined the code"
+    AGENT_LOG="$BATS_TEST_TMPDIR/logs/step.log" run run_agent claude "a prompt" "Read"
+    assert_success
+    assert_output --partial "refined the code"
+    run cat "$BATS_TEST_TMPDIR/logs/step.log"
+    assert_output --partial "agent=claude"
+    assert_output --partial "refined the code"
+    assert_output --partial "exit=0"
+}
+
+@test "run_agent returns the agent's exit code, not tee's" {
+    source_lib
+    stub_agent 1 "partial work" "Execution error"
+    AGENT_LOG="$BATS_TEST_TMPDIR/logs/step.log" run run_agent claude "a prompt" "Read"
+    assert_failure
+    # The caller's `|| local_exit=$?` depends on this, and tee always succeeds.
+    [ "$status" -eq 1 ]
+}
+
+@test "run_agent captures a failing agent's stderr in the log" {
+    source_lib
+    stub_agent 1 "partial work" "Execution error"
+    AGENT_LOG="$BATS_TEST_TMPDIR/logs/step.log" run run_agent claude "a prompt" "Read"
+    run cat "$BATS_TEST_TMPDIR/logs/step.log"
+    # The whole point: a run that dies leaves the reason on disk.
+    assert_output --partial "Execution error"
+    assert_output --partial "exit=1"
+}
+
+@test "run_agent creates the log directory if it does not exist" {
+    source_lib
+    stub_agent 0 "ok"
+    AGENT_LOG="$BATS_TEST_TMPDIR/deep/nested/dir/step.log" run run_agent claude "p" "Read"
+    assert_success
+    [ -f "$BATS_TEST_TMPDIR/deep/nested/dir/step.log" ]
+}
+
+# =========================================================================
+# Run log retention
+# =========================================================================
+
+make_run_dir() { # make_run_dir <root> <name> <days-old>
+    local dir="$1/$2"
+    mkdir -p "$dir"
+    echo "log" > "$dir/step.log"
+    if [ "$3" -gt 0 ]; then
+        # touch -A/-d differ across platforms; -t with a computed stamp is portable.
+        local stamp
+        stamp=$(date -v "-$3d" '+%Y%m%d%H%M' 2>/dev/null) \
+            || stamp=$(date -d "$3 days ago" '+%Y%m%d%H%M')
+        touch -t "$stamp" "$dir"
+    fi
+}
+
+@test "prune_run_logs also deletes a suffixed run directory" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    # A run that lost the claim race is named <stamp>-XXXXXX and must not
+    # outlive the plain ones just because of its suffix.
+    make_run_dir "$root" 20260101-120000-a1b2c3 5
+    make_run_dir "$root" 20260807-120000-d4e5f6 0
+    run prune_run_logs "$root"
+    assert_output "1"
+    [ ! -d "$root/20260101-120000-a1b2c3" ]
+    [ -d "$root/20260807-120000-d4e5f6" ]
+}
+
+@test "prune_run_logs deletes runs older than a day and keeps today's" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 5
+    make_run_dir "$root" 20260102-120000 3
+    make_run_dir "$root" 20260807-120000 0
+    run prune_run_logs "$root"
+    assert_output "2"
+    [ ! -d "$root/20260101-120000" ]
+    [ ! -d "$root/20260102-120000" ]
+    [ -d "$root/20260807-120000" ]
+}
+
+@test "prune_run_logs leaves everything when nothing is old enough" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260807-120000 0
+    make_run_dir "$root" 20260807-130000 0
+    run prune_run_logs "$root"
+    assert_output ""
+    [ -d "$root/20260807-120000" ]
+    [ -d "$root/20260807-130000" ]
+}
+
+@test "prune_run_logs ignores directories that are not run stamps" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    mkdir -p "$root/backups" "$root/notes"
+    echo keep > "$root/backups/original.sh"
+    touch -t 202001010000 "$root/backups" "$root/notes"
+    make_run_dir "$root" 20260101-120000 5
+    run prune_run_logs "$root"
+    assert_output "1"
+    # Anything a user keeps alongside the run dirs is not ours to delete.
+    [ -f "$root/backups/original.sh" ]
+    [ -d "$root/notes" ]
+}
+
+@test "prune_run_logs honours a custom retention in days" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 10
+    make_run_dir "$root" 20260102-120000 3
+    run prune_run_logs "$root" 7
+    assert_output "1"
+    [ ! -d "$root/20260101-120000" ]
+    [ -d "$root/20260102-120000" ]
+}
+
+@test "prune_run_logs is a no-op on a missing or invalid target" {
+    source_lib
+    run prune_run_logs "$BATS_TEST_TMPDIR/nope"
+    assert_success
+    assert_output ""
+    local root="$BATS_TEST_TMPDIR/logs"
+    make_run_dir "$root" 20260101-120000 5
+    run prune_run_logs "$root" "not-a-number"
+    assert_output ""
+    [ -d "$root/20260101-120000" ]
+}
+
+@test "cleanup_agent_artifacts does not delete run logs inside the repo" {
+    source_lib
+    cd "$BATS_TEST_TMPDIR"
+    git init -q . && git config user.email t@t && git config user.name t
+    echo tracked > kept.txt && git add . && git commit -qm init
+
+    RUN_LOG_DIR="$BATS_TEST_TMPDIR/logs/20260807-120000"
+    mkdir -p "$RUN_LOG_DIR"
+
+    local before="$BATS_TEST_TMPDIR/before.txt"
+    snapshot_untracked > "$before"
+
+    # Both appear during the run: one is a Codex artifact, one is our own log.
+    echo junk > artifact.txt
+    echo "agent output" > "$RUN_LOG_DIR/3-review.codex.log"
+
+    run cleanup_agent_artifacts codex "$before" reviewer
+    assert_success
+    [ ! -f artifact.txt ]
+    [ -f "$RUN_LOG_DIR/3-review.codex.log" ]
+}
+
+@test "claim_run_log_dir gives concurrent callers separate directories" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/logs"
+    local out="$BATS_TEST_TMPDIR/claimed.txt"
+    : > "$out"
+
+    # Twenty at once, all inside the same second, which is exactly when a
+    # check-then-create claim hands two callers the same name.
+    local _
+    for _ in $(seq 1 20); do
+        ( claim_run_log_dir "$root" >> "$out" ) &
+    done
+    wait
+
+    local claimed unique
+    claimed=$(wc -l < "$out" | tr -d ' ')
+    unique=$(sort -u "$out" | wc -l | tr -d ' ')
+    [ "$claimed" -eq 20 ]
+    [ "$unique" -eq 20 ]
+}
+
+@test "claim_run_log_dir creates the root when it is missing" {
+    source_lib
+    local dir
+    dir=$(claim_run_log_dir "$BATS_TEST_TMPDIR/deep/nested/root")
+    [ -d "$dir" ]
+    [[ "$dir" == "$BATS_TEST_TMPDIR/deep/nested/root/"* ]]
+}
+
+@test "is_inside_dir resolves relative, trailing-slash and symlinked paths" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/root"
+    mkdir -p "$root/logs" "$root/other"
+    : > "$root/logs/a.log"
+    : > "$root/other/b.txt"
+    ln -s "$root/logs" "$root/linked"
+    cd "$root" || return 1
+
+    run is_inside_dir "logs/a.log" "logs";      assert_success
+    run is_inside_dir "logs/a.log" "logs/";     assert_success
+    run is_inside_dir "logs/a.log" "$root/logs"; assert_success
+    run is_inside_dir "logs/a.log" "linked";    assert_success
+    run is_inside_dir "other/b.txt" "logs";     assert_failure
+    # An empty or missing directory is never a container.
+    run is_inside_dir "logs/a.log" "";          assert_failure
+    run is_inside_dir "logs/a.log" "$root/nope"; assert_failure
+}

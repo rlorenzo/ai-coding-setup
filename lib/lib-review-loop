@@ -227,7 +227,7 @@ agent_command() {
 #   $1: agent name ("claude", "codex", "copilot", "antigravity", or "kimi")
 #   $2: prompt text
 #   $3: allowed tools (only used by Claude; ignored by others)
-run_agent() {
+_dispatch_agent() {
     local agent="$1" prompt="$2" tools="${3:-}"
     case "$agent" in
         claude)      run_claude "$prompt" "$tools" ;;
@@ -237,6 +237,30 @@ run_agent() {
         kimi)        run_kimi "$prompt" ;;
         *)           echo -e "${RED}ERROR: Unknown agent: $agent${NC}"; return 1 ;;
     esac
+}
+
+# Mirrors the agent's combined output to AGENT_LOG when set. Without it an agent
+# that dies leaves only an exit code and whatever is still in scrollback.
+run_agent() {
+    local agent="$1" prompt="$2" tools="${3:-}"
+    local rc=0
+
+    if [[ -z "${AGENT_LOG:-}" ]]; then
+        _dispatch_agent "$agent" "$prompt" "$tools"
+        return $?
+    fi
+
+    mkdir -p "$(dirname "$AGENT_LOG")"
+    printf '=== %s  agent=%s  tools=%s ===\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$agent" "${tools:-default}" >> "$AGENT_LOG"
+
+    # PIPESTATUS, not the pipeline's status: tee succeeds even when the agent
+    # does not, and the caller's `|| local_exit=$?` has to see the agent's code.
+    _dispatch_agent "$agent" "$prompt" "$tools" 2>&1 | tee -a "$AGENT_LOG"
+    rc=${PIPESTATUS[0]}
+
+    printf '=== exit=%s ===\n\n' "$rc" >> "$AGENT_LOG"
+    return "$rc"
 }
 
 # ---- shared validation ----------------------------------------------------
@@ -395,6 +419,70 @@ cleanup_temp() {
     [[ -n "$TMPDIR_REVIEW" ]] && rm -rf "$TMPDIR_REVIEW"
 }
 
+# ---- paths ----------------------------------------------------------------
+
+# True when $1 is a file inside directory $2. Both sides are resolved, so a
+# relative, trailing-slashed, or symlinked argument compares correctly.
+#   $1: file path
+#   $2: directory path
+is_inside_dir() {
+    local file="$1" dir="$2" file_abs dir_abs
+    [[ -n "$dir" && -d "$dir" ]] || return 1
+    dir_abs=$(cd "$dir" && pwd -P) || return 1
+    file_abs="$(cd "$(dirname "$file")" 2>/dev/null && pwd -P)/$(basename "$file")"
+    [[ "$file_abs" == "$dir_abs"/* ]]
+}
+
+# ---- run log directories --------------------------------------------------
+
+# Claim a run directory under $1 and print its path.
+# Claimed by creating it: mkdir is atomic, so two loops starting in the same
+# second cannot share one. The loser falls back to mktemp, also atomic (a pid is
+# not enough: in a subshell $$ is the parent's, so every loser picks alike).
+#   $1: directory to create the run directory under
+claim_run_log_dir() {
+    local root="$1" stamp dir
+    mkdir -p "$root" || return 1
+    stamp=$(date '+%Y%m%d-%H%M%S')
+    dir="$root/$stamp"
+    if mkdir "$dir" 2>/dev/null; then
+        printf '%s\n' "$dir"
+        return 0
+    fi
+    # Suffixed, so it still starts with the stamp and prune_run_logs sees it.
+    dir=$(mktemp -d "$root/$stamp-XXXXXX") || return 1
+    printf '%s\n' "$dir"
+}
+
+# ---- run log retention ----------------------------------------------------
+
+# Delete run directories under $1 older than $2 days. Prints how many.
+# By age, not count: the loop is run repeatedly in a sitting, so ten runs in an
+# afternoon should not push out yesterday's. Only matches the YYYYmmdd-HHMMSS
+# directories the loops create, so anything kept alongside them survives, and
+# -mtime +0 spares today's.
+#   $1: directory holding the run directories
+#   $2: delete runs older than this many days (default 1, or REVIEW_LOOP_LOG_DAYS)
+prune_run_logs() {
+    local root="$1" days="${2:-${REVIEW_LOOP_LOG_DAYS:-1}}"
+    [[ -d "$root" ]] || return 0
+    [[ "$days" =~ ^[0-9]+$ ]] && (( days >= 1 )) || return 0
+
+    local -a old=()
+    local d
+    while IFS= read -r d; do
+        [[ -n "$d" ]] && old+=("$d")
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d \
+        -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*' \
+        -mtime "+$(( days - 1 ))" 2>/dev/null | sort)
+
+    (( ${#old[@]} > 0 )) || return 0
+    for d in "${old[@]}"; do
+        rm -rf "$d"
+    done
+    printf '%s\n' "${#old[@]}"
+}
+
 # ---- elapsed time --------------------------------------------------------
 
 # Compute human-readable elapsed time from a start timestamp.
@@ -447,6 +535,9 @@ cleanup_agent_artifacts() {
             if [[ " $KNOWN_REVIEW_FILES " == *" $base "* ]]; then
                 continue
             fi
+            # A run log is not an agent artifact; it is only reachable here
+            # when the log dir sits inside the repo.
+            is_inside_dir "$file" "${RUN_LOG_DIR:-}" && continue
             rm -f "$file" 2>/dev/null || true
             write_status "Removed Codex artifact: $file" "$DIM"
         done <<< "$new_files"

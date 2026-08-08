@@ -121,6 +121,8 @@ stage_review_changes() {
     if [[ -n "$new_untracked" ]]; then
         while IFS= read -r file; do
             [[ -z "$file" ]] && continue
+            # A log records the run; it is not part of the change.
+            is_inside_dir "$file" "${RUN_LOG_DIR:-}" && continue
             git add -- "$file"
             write_status "Staged new file: $file" "$DIM"
         done <<< "$new_untracked"
@@ -166,6 +168,18 @@ fi
 setup_temp "code-review-loop"
 trap cleanup_temp EXIT
 
+# ---- run logs -------------------------------------------------------------
+# Outside TMPDIR_REVIEW, which the EXIT trap wipes, and outside the project,
+# where stage_review_changes would commit them. CODE_REVIEW_LOOP_LOG_DIR names
+# the directory runs go under, not the run itself.
+RUN_LOG_ROOT="${CODE_REVIEW_LOOP_LOG_DIR:-$HOME/.cache/code-review-loop}"
+RUN_LOG_DIR=$(claim_run_log_dir "$RUN_LOG_ROOT")
+
+# Only the default location is pruned; a directory the user named is theirs.
+if [[ -z "${CODE_REVIEW_LOOP_LOG_DIR:-}" ]]; then
+    pruned=$(prune_run_logs "$RUN_LOG_ROOT") || true
+fi
+
 echo ""
 echo -e "${MAGENTA}========================================${NC}"
 echo -e "${MAGENTA} Code Review Loop${NC}"
@@ -174,6 +188,8 @@ echo " Max iterations : $MAX_ITERATIONS"
 echo " Skip refinement: $SKIP_REFINEMENT"
 echo " Editor         : $EDITOR_AGENT"
 echo " Reviewer       : $REVIEWER_AGENT"
+echo " Logs           : $RUN_LOG_DIR"
+[[ -n "${pruned:-}" ]] && echo " Pruned         : $pruned run log(s) older than a day"
 
 start_time=$(date +%s)
 
@@ -219,11 +235,13 @@ if [[ "$SKIP_REFINEMENT" == false ]]; then
     snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    run_agent "$EDITOR_AGENT" "$refinement_prompt" "$EDITOR_TOOLS" || local_exit=$?
+    AGENT_LOG="$RUN_LOG_DIR/1-refinement.$EDITOR_AGENT.log" \
+        run_agent "$EDITOR_AGENT" "$refinement_prompt" "$EDITOR_TOOLS" || local_exit=$?
     cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
         write_status "$EDITOR_AGENT code-refinement exited with code $local_exit" "$YELLOW"
+        write_status "Log: $RUN_LOG_DIR/1-refinement.$EDITOR_AGENT.log" "$YELLOW"
     else
         write_status "Code refinement complete" "$GREEN"
     fi
@@ -262,15 +280,18 @@ pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
 snapshot_untracked > "$pre_snapshot"
 
 local_exit=0
-run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
+AGENT_LOG="$RUN_LOG_DIR/3-review-initial.$REVIEWER_AGENT.log" \
+    run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
 cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
 if [[ $local_exit -ne 0 ]]; then
     write_status "$REVIEWER_AGENT code review exited with code $local_exit" "$YELLOW"
+    write_status "Log: $RUN_LOG_DIR/3-review-initial.$REVIEWER_AGENT.log" "$YELLOW"
 fi
 
 if [[ ! -f "$REVIEW_FILE" ]]; then
     write_status "No review file created; $REVIEWER_AGENT may have failed" "$RED"
+    write_status "Log: $RUN_LOG_DIR/3-review-initial.$REVIEWER_AGENT.log" "$RED"
     echo ""
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${MAGENTA} Code Review Loop Complete${NC}"
@@ -315,7 +336,8 @@ Read it, evaluate each finding, implement valid fixes, and respond inline per th
     snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    run_agent "$EDITOR_AGENT" "$context_prompt" "$EDITOR_TOOLS" || local_exit=$?
+    AGENT_LOG="$RUN_LOG_DIR/4.$iteration-response.$EDITOR_AGENT.log" \
+        run_agent "$EDITOR_AGENT" "$context_prompt" "$EDITOR_TOOLS" || local_exit=$?
     cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
@@ -343,7 +365,8 @@ IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings."
     snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
+    AGENT_LOG="$RUN_LOG_DIR/6.$iteration-review.$REVIEWER_AGENT.log" \
+        run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
     cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
@@ -437,7 +460,8 @@ Write agent-review-summary.md with this structure:
 Be concise and focus on the substance of review-driven improvements, not the original feature work or process details."
 
 local_exit=0
-run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
+AGENT_LOG="$RUN_LOG_DIR/final-summary.$EDITOR_AGENT.log" \
+    run_agent "$EDITOR_AGENT" "$summary_prompt" "Read,Write,Grep,Glob" || local_exit=$?
 
 if [[ $local_exit -ne 0 ]]; then
     write_status "$EDITOR_AGENT summary generation exited with code $local_exit" "$YELLOW"
@@ -487,4 +511,6 @@ if [[ -n "$STASH_REF" ]]; then
         echo ""
     fi
 fi
+echo -e " Logs     : $RUN_LOG_DIR"
+echo ""
 echo -e "${CYAN}Waiting for manual review.${NC}"
