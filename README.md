@@ -190,6 +190,24 @@ code-review-loop --editor claude --reviewer codex
 
 **Outputs (project root):** `agent-code-review.md` (latest findings), `agent-review-summary.md` (narrative).
 
+**When a run fails, read the logs.** Each agent's full output is written to a per-run directory, printed in the banner at startup and again whenever an agent exits non-zero:
+
+```text
+ Logs           : ~/.cache/code-review-loop/20260807-142516
+```
+
+One file per step, named for the step and the agent that ran it:
+
+```text
+1-refinement.claude.log
+3-review-initial.antigravity.log
+4.1-response.claude.log
+6.1-review.antigravity.log
+final-summary.claude.log
+```
+
+Each records the agent, the tools it was allowed, its combined stdout and stderr, and its exit code. This is the difference between "it failed" and knowing why: a loop that stops with a bare `Execution error` on the terminal leaves nothing else behind, and a run started in the background does not even have the scrollback. Note that an agent failing does not stop the loop; it logs the failure and carries on, so the log is often the only sign a step went wrong.
+
 ### plan-review-loop
 
 Iteratively improves a **plan document** through review feedback:
@@ -222,6 +240,13 @@ Supported agents: `claude`, `codex`, `copilot`, `antigravity`, `kimi`. Only the 
 Two caveats for `kimi`: it takes its prompt as a command-line argument (there is no stdin form), so on Windows/Git Bash a very large prompt can exceed the OS argument limit. Copilot has the same limitation. And it has no per-run flag to disable MCP servers, so an autonomous loop run still loads whatever is configured in `~/.kimi-code/mcp.json`.
 
 Both loops write their working files (`agent-code-review.md`, `agent-review-summary.md`, `feedback-plan.md`, `plan-review-summary.md`) to the target project's root. Consider adding those names to that project's `.gitignore` (or your global gitignore) so an agent never commits them by accident.
+
+Environment variables:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `CODE_REVIEW_LOOP_LOG_DIR` | `~/.cache/code-review-loop` | The directory `code-review-loop` writes its per-run log directories under. |
+| `AI_CODING_SETUP_PROMPTS_DIR` | `~/.local/share/ai-coding-setup/prompts` | Where the loops read their prompts from. |
 
 ### Shared prompts
 
