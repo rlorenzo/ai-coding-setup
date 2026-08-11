@@ -29,7 +29,16 @@ Re-fetch fresh each iteration. `--slurp` can't combine with `--jq`, so pipe to `
 
 ```bash
 gh api graphql --paginate --slurp \
-  -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(first:100){nodes{databaseId body path line author{login}}}}}}}}' \
+  -f query='query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String) {
+    repository(owner:$owner, name:$repo) {
+      pullRequest(number:$pr) {
+        reviewThreads(first:100, after:$endCursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id isResolved comments(first:100){nodes{databaseId body path line author{login}}} }
+        }
+      }
+    }
+  }' \
   -f owner="{owner}" -f repo="{repo}" -F pr={PR_NUMBER} \
   | jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)]'
 ```
@@ -72,12 +81,22 @@ Empty `stale` → success, stop. Otherwise re-trigger each login; bots do not re
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Copilot takes the literal `@copilot` (`--add-reviewer Copilot` fails to resolve). Confirm via GraphQL `reviewRequests`, **never REST `requested_reviewers`, which lists Users only, so a Bot never appears there and a successful request reads as failed**:
+- Copilot takes the literal `@copilot` (`--add-reviewer Copilot` fails to resolve). Confirm via raw GraphQL `reviewRequests` only. **Never REST `requested_reviewers` (lists Users only) and never `gh pr view --json reviewRequests` (serializes only Users and Teams): in both, a requested Bot prints as empty and a successful request reads as failed.**
 
   ```bash
-  gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewRequests(first:20){nodes{requestedReviewer{__typename ... on Bot{login} ... on User{login}}}}}}}' \
+  gh api graphql \
+    -f query='query($owner:String!,$repo:String!,$pr:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$pr) {
+          reviewRequests(first:20) {
+            nodes { requestedReviewer { ... on Bot { login } ... on User { login } } }
+          }
+        }
+      }
+    }' \
     -f owner={owner} -f repo={repo} -F pr={PR_NUMBER} \
-    --jq '.data.repository.pullRequest.reviewRequests.nodes[].requestedReviewer.login' | grep -q '^copilot-pull-request-reviewer$'
+    --jq '.data.repository.pullRequest.reviewRequests.nodes[].requestedReviewer.login' \
+    | grep -q '^copilot-pull-request-reviewer$'
   ```
 
   `reviewRequests` drops the `[bot]` suffix the table lists. A real miss means the request failed, and the poll below would time out waiting.
