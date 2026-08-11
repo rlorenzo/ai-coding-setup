@@ -43,8 +43,8 @@ Threads remain → step 3. Never re-request a bot while threads are open. Zero u
 Read the referenced file and its context, then classify:
 
 - **Already addressed / Informational / Inaccurate**: append body to `$IGNORED_FILE`, resolve (reply briefly if inaccurate).
-- **Valid fix**: implement minimally. Must meet ALL: (1) real bug — wrong behavior, data loss, security, crash, race; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
-- **Nitpick / Low-value**: resolve WITHOUT implementing — style not enforced by a linter, docstrings on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append to `$IGNORED_FILE`, reply with a one-line rationale, resolve.
+- **Valid fix**: implement minimally. Must meet ALL: (1) real bug: wrong behavior, data loss, security, crash, race; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
+- **Nitpick / Low-value**: resolve WITHOUT implementing: style not enforced by a linter, docstrings on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append to `$IGNORED_FILE`, reply with a one-line rationale, resolve.
 
 ### 4. Push fixes
 
@@ -72,7 +72,7 @@ Empty `stale` → success, stop. Otherwise re-trigger each login; bots do not re
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Copilot takes the literal `@copilot` (`--add-reviewer Copilot` fails to resolve). Confirm via GraphQL `reviewRequests` — **never REST `requested_reviewers`, which lists Users only, so a Bot never appears there and a successful request reads as failed**:
+- Copilot takes the literal `@copilot` (`--add-reviewer Copilot` fails to resolve). Confirm via GraphQL `reviewRequests`, **never REST `requested_reviewers`, which lists Users only, so a Bot never appears there and a successful request reads as failed**:
 
   ```bash
   gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewRequests(first:20){nodes{requestedReviewer{__typename ... on Bot{login} ... on User{login}}}}}}}' \
@@ -84,7 +84,7 @@ Empty `stale` → success, stop. Otherwise re-trigger each login; bots do not re
 - App bots (CodeRabbit, Greptile) can't be requested as reviewers; a mention is the only trigger. `@coderabbitai full review` covers the whole diff, not just new commits.
 - **Bot not in the table** → ask the user for the trigger. Never guess a mention string: a wrong one posts a visible no-op comment.
 
-Poll until every triggered bot covers `head_sha`. Set `triggered` to the logins you actually fired:
+Poll until every triggered bot covers `head_sha`. Set `triggered` to the logins you actually fired, one per line:
 
 ```bash
 triggered="$stale"   # minus any bot you could not trigger
