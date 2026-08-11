@@ -48,6 +48,8 @@ Pin an explicit model on every spawn, preferring your harness's stable aliases (
 
 Reports are leads, not facts. Before acting on a high-impact finding, opening a PR, or claiming done: reopen key cited files, confirm line refs and failures, review the final diff, and resolve subagent disagreements yourself. For non-trivial completed work, spawn a fresh-context verifier on your tier that only tries to refute the claim (rerun the tests, drive the affected flow, probe edge cases) and never fixes anything; independent refutation beats self-review.
 
+**A subagent can finish without reporting.** Going idle is not the same as returning findings: an agent may signal it is done and hand back nothing. Treat a silent completion as one failure, not as an empty result: ask for the report once, naming the format you expected and telling it to state which objectives it did *not* finish rather than padding. If the second attempt is also silent, take the work back rather than spawning a replacement; a task cheap enough to delegate is usually cheap enough to run inline, and you have already spent the delegation's wall-clock twice. Never treat silence as "nothing found"; that reads as a clean result when nothing was actually checked.
+
 ## Guardrails
 
 - Don't delegate a blocker your next step needs.
