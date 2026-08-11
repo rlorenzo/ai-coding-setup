@@ -83,7 +83,15 @@ Empty `stale` → every bot already covers `head_sha`, success, stop. Otherwise 
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Pass the literal `@copilot`; its raw `[bot]` login can exit 0 having requested nothing. Confirm Copilot specifically, not just that some reviewer is pending: `gh api repos/{owner}/{repo}/pulls/{PR_NUMBER} --jq '.requested_reviewers[].login' | grep -qiE '^(Copilot|copilot-pull-request-reviewer\[bot\])$'`. A miss means it did not take, and the poll below would burn its full timeout waiting. Match both spellings: `requested_reviewers` returns the login as `Copilot`, while the review it later submits carries `copilot-pull-request-reviewer[bot]`, so checking only the `[bot]` form reports failure on every successful request.
+- Pass the literal `@copilot`; its raw `[bot]` login cannot be resolved (`--add-reviewer Copilot` fails with `Could not resolve user with login 'copilot'`). Confirm Copilot specifically, not just that some reviewer is pending — but **confirm through GraphQL `reviewRequests`, never REST `requested_reviewers`.** Copilot is a Bot, and the REST field lists Users only, so a Bot reviewer never appears there no matter how the request was made. A REST-based check therefore reports failure on every *successful* request, which makes a working trigger look broken and sends you hunting for a replacement that was never needed:
+
+  ```bash
+  gh api graphql -f query='query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewRequests(first:20){nodes{requestedReviewer{__typename ... on Bot{login} ... on User{login}}}}}}}' \
+    -f owner={owner} -f repo={repo} -F pr={PR_NUMBER} \
+    --jq '.data.repository.pullRequest.reviewRequests.nodes[].requestedReviewer.login' | grep -q '^copilot-pull-request-reviewer$'
+  ```
+
+  Note the pattern: `reviewRequests` drops the `[bot]` suffix the table above lists, so grepping the table's login here silently never matches. A genuine miss means the request did not take, and the poll below would burn its full timeout waiting.
 - App-based bots (CodeRabbit, Greptile) cannot be requested as reviewers at all; a mention is their only trigger. `@coderabbitai full review` re-reviews the whole diff rather than just new commits.
 - **Bot not in the table, or none found** → ask the user for the exact trigger. Never guess a mention string: a wrong one posts a visible no-op comment.
 
