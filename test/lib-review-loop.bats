@@ -610,5 +610,7 @@ stub_codex() { # records the argv it was invoked with, then succeeds
     assert_output --partial "exec"
     assert_output --partial "mcp_servers={}"
     # The trailing "-" is what makes codex read the prompt from stdin.
-    assert_output --partial "-"
+    # assert_line matches a whole argument: --partial would also be satisfied
+    # by the hyphens in --sandbox, so it would pass with the "-" removed.
+    assert_line "-"
 }
