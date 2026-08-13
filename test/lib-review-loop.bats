@@ -558,3 +558,57 @@ make_run_dir() { # make_run_dir <root> <name> <days-old>
     run is_inside_dir "logs/a.log" "";          assert_failure
     run is_inside_dir "logs/a.log" "$root/nope"; assert_failure
 }
+
+# =========================================================================
+# Codex invocation
+#
+# The flags run_codex passes are a compatibility surface, not an internal
+# detail: codex rejects an unknown flag at parse time, so a stale one means
+# the agent never starts and the loop ends with no review written. That
+# failure looked like a codex problem rather than ours, so pin the contract.
+# =========================================================================
+
+stub_codex() { # records the argv it was invoked with, then succeeds
+    local dir="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$dir"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'cat >/dev/null'
+        printf 'printf "%%s\\n" "$@" > %q\n' "$BATS_TEST_TMPDIR/codex-argv"
+    } > "$dir/codex"
+    chmod +x "$dir/codex"
+    PATH="$dir:$PATH"
+}
+
+@test "run_codex does not pass --full-auto, which codex exec no longer accepts" {
+    source_lib
+    stub_codex
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/codex-argv"
+    refute_output --partial "--full-auto"
+}
+
+@test "run_codex requests a sandbox that can write the review file" {
+    source_lib
+    stub_codex
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/codex-argv"
+    # read-only would let the agent run but silently fail to write
+    # agent-code-review.md, which the loop reports as a dead codex.
+    assert_output --partial "--sandbox"
+    assert_output --partial "workspace-write"
+}
+
+@test "run_codex still runs exec non-interactively with MCP servers disabled" {
+    source_lib
+    stub_codex
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/codex-argv"
+    assert_output --partial "exec"
+    assert_output --partial "mcp_servers={}"
+    # The trailing "-" is what makes codex read the prompt from stdin.
+    assert_output --partial "-"
+}

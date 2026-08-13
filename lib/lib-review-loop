@@ -151,17 +151,25 @@ run_claude() {
 
 # Run Codex CLI with a prompt.  Wraps the prompt with a preamble that prevents
 # conversational output, and disables MCP servers to avoid artifact creation.
+#
+# --sandbox workspace-write, not --full-auto: codex-cli dropped --full-auto from
+# the `exec` subcommand (gone as of 0.147.0), and an unknown flag is a hard
+# parse error, so the agent never starts and the loop exits with no review.
+# workspace-write is the equivalent policy -- `exec` is already non-interactive,
+# so there are no approvals to auto-accept, only the sandbox to widen far enough
+# that the reviewer can write agent-code-review.md.
 #   $1: prompt text
 run_codex() {
     local prompt="$1"
     local wrapped="Execute the following task now. Do not introduce yourself. Begin immediately.
 
 $prompt"
-    echo "$wrapped" | codex exec --full-auto --config 'mcp_servers={}' -
+    echo "$wrapped" | codex exec --sandbox workspace-write --config 'mcp_servers={}' -
 }
 
 # Run Antigravity CLI with a prompt in non-interactive headless mode.
-# Uses --dangerously-skip-permissions for auto-approval (equivalent to Codex --full-auto).
+# Uses --dangerously-skip-permissions for auto-approval (the Codex equivalent is
+# --sandbox workspace-write; see run_codex).
 # The prompt MUST be piped via stdin without -p: since agy 1.1.1, passing any
 # -p value disables stdin reading, and whitespace-only -p values are rejected
 # as an empty prompt. A piped stdin prompt alone still enters print mode.
