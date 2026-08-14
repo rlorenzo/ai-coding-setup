@@ -282,24 +282,55 @@ The setup script can configure [Model Context Protocol (MCP)](https://modelconte
 
 MCP servers are added via each tool's `mcp add` CLI command at user scope. Tools without one (Copilot, Antigravity, Kimi Code) get their JSON config file edited directly; for Kimi that is `~/.kimi-code/mcp.json`, whose only built-in editor is the interactive `/mcp-config` TUI command.
 
-## `gh` Agent Skill
+## `gh` Agent Skills
 
-Beyond the commands in this repo, `setup` can install the [`gh` agent skill published by `cli/cli`](https://github.com/cli/cli#agent-skills) for each selected tool. This is an **upstream** skill from the GitHub CLI team that teaches an agent to drive `gh` well: structured JSON output, pagination, repo targeting, search vs. list, and `gh api` fallback. It is unrelated to the commands/skills this repo ships.
+Beyond the commands in this repo, `setup` can install GitHub's **upstream** agent skills for each selected tool. These come from the GitHub CLI team and are unrelated to the commands/skills this repo ships:
 
-For each agent you select, `setup` installs it when missing and updates it when already present:
+| Skill | Repo | What it teaches |
+| --- | --- | --- |
+| `gh` | [`cli/cli`](https://github.com/cli/cli#agent-skills) | Driving `gh` well: structured JSON output, pagination, repo targeting, search vs. list, `gh api` fallback |
+| `gh-stack` | [`github/gh-stack`](https://github.com/github/gh-stack) | [Stacked pull requests](#stacked-pull-requests): creating a stack, adding layers, `submit`/`sync`/`rebase`, bottom-up merge |
 
-- Install: `gh skill install cli/cli gh --agent <id> --scope user`
-- Update: `gh skill update gh`
+For each agent you select, `setup` installs a skill when missing and updates it when already present:
 
-This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature), and for Kimi Code, which `gh skill` has no `--agent` id for. To manage it yourself:
+- Install: `gh skill install <repo> <skill> --agent <id> --scope user`
+- Update: `gh skill update <skill>`
+
+This step is skipped automatically on versions of `gh` too old to ship the `gh skill` command (a preview feature), and for Kimi Code, which this repo has no `gh skill --agent` id mapped for. To manage the skills yourself:
 
 ```bash
-gh skill install cli/cli gh --agent claude-code --scope user   # install for one agent
-gh skill update gh                                             # update (all hosts where it's installed)
-gh skill list --agent claude-code                              # verify
+gh skill install cli/cli gh --agent claude-code --scope user               # install for one agent
+gh skill install github/gh-stack gh-stack --agent claude-code --scope user
+gh skill update gh                                                         # update (all hosts where it's installed)
+gh skill list --agent claude-code                                          # verify
 ```
 
-There is no `gh skill uninstall` command; to remove it, delete the installed `gh/` skill directory (its location is agent-dependent, e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
+There is no `gh skill uninstall` command; to remove one, delete the installed skill directory (its location is agent-dependent, e.g. `~/.codex/skills/gh/` or `~/.copilot/skills/gh-stack/`; run `gh skill list --json skillName,path` to see the exact filesystem path).
+
+## Stacked Pull Requests
+
+[Stacked PRs](https://docs.github.com/en/pull-requests/get-started/about-stacked-prs) are a chain of dependent branches where each pull request targets the one below it instead of `main`, so each layer stays small and reviewable and the stack merges bottom-up. GitHub drives them through the official [`gh stack`](https://github.com/github/gh-stack) extension.
+
+`setup` offers the extension once per run (it is agent-agnostic, unlike the skills above), installing it when missing and upgrading it when already present:
+
+```bash
+gh extension install github/gh-stack   # install
+gh extension upgrade gh-stack          # update
+```
+
+Pair it with the `gh-stack` agent skill above so your agent knows the workflow. The core loop:
+
+```bash
+gh stack init          # start a stack on the current repo, naming the first branch
+gh stack add NAME      # add the next layer on top (-Am "msg" also stages and commits)
+gh stack push          # push every branch in the stack
+gh stack submit        # create/update the PRs and link them as a stack
+gh stack view          # show the branches, PR links, and commits
+gh stack sync          # fetch, rebase, push, and sync PR state after main moves
+gh stack merge         # merge one or more PRs, bottom-up
+```
+
+`gh stack up`/`down`/`top`/`bottom`/`trunk` move between layers. See the [CLI command reference](https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands) for every subcommand and flag. Cross-fork stacks and GitHub Desktop are not supported.
 
 ## Impeccable Design Skills
 
@@ -366,7 +397,7 @@ Delete the command/skill from the corresponding directory (or uninstall the plug
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
 - Kimi Code: `~/.kimi-code/skills/` (or `$KIMI_CODE_HOME/skills/`)
 
-The setup script only manages commands it originally installed.
+The setup script only manages commands it originally installed. The upstream extras are removed separately: `gh extension remove gh-stack` for the `gh stack` extension, and for the `gh`/`gh-stack` agent skills, delete their directories as described in [`gh` Agent Skills](#gh-agent-skills).
 
 ## Contributing
 
