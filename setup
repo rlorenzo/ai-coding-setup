@@ -772,15 +772,34 @@ configure_copilot_settings() {
 
 # ---- gh agent skill installer ----------------------------------------------
 #
-# The cli/cli repo publishes an agent skill named `gh` that teaches coding
-# agents how to drive the GitHub CLI (structured output, pagination, repo
-# targeting, search vs list, gh api fallback). Offer to install it (or update
-# it if already present) for a selected agent. This is an upstream skill,
-# unrelated to the commands/skills this repo installs.
+# GitHub publishes upstream agent skills that teach coding agents how to drive
+# the GitHub CLI. Offer to install one (or update it if already present) for a
+# selected agent. These are upstream skills, unrelated to the commands/skills
+# this repo installs.
+#
+#   cli/cli        gh        driving gh well (structured output, pagination,
+#                            repo targeting, search vs list, gh api fallback)
+#   github/gh-stack gh-stack native stacked pull requests via `gh stack`
+
+# Upstream skills to offer, as "repo skill". Order is the prompt order.
+GH_SKILLS=(
+    "cli/cli gh"
+    "github/gh-stack gh-stack"
+)
 
 # True when this gh is new enough to have the `gh skill` command (preview).
 gh_skill_available() {
     gh skill --help &>/dev/null
+}
+
+# `gh skill update` scans every agent host directory itself, so one call already
+# covers every agent. Only `gh skill install` is per-agent. Track the skills
+# updated so far this run so a skill shared by several selected agents is not
+# re-fetched once per agent. Space-delimited; skill names never contain spaces.
+_gh_skills_updated=" "
+
+gh_skill_updated_this_run() {
+    [[ "$_gh_skills_updated" == *" $1 "* ]]
 }
 
 # Map an internal tool name to its `gh skill --agent` identifier.
@@ -795,45 +814,103 @@ gh_skill_agent_id() {
     esac
 }
 
-# Usage: configure_gh_skill <tool> <display_name>
+# Print the two-line pitch shown before offering to install a skill.
+gh_skill_blurb() {
+    case "$1" in
+        gh)
+            echo "  Teaches the agent to drive the GitHub CLI (structured output,"
+            echo "  pagination, repo targeting, search vs list, gh api fallback)."
+            ;;
+        gh-stack)
+            echo "  Teaches the agent GitHub's native stacked pull requests: split"
+            echo "  work into layered branches and submit/sync/merge them with"
+            echo "  'gh stack'. Needs the github/gh-stack extension (offered above)."
+            ;;
+    esac
+}
+
+# Usage: configure_gh_skill <tool> <display_name> <repo> <skill>
 configure_gh_skill() {
-    local tool="$1" display_name="$2"
+    local tool="$1" display_name="$2" repo="$3" skill="$4"
     local agent_id
     agent_id=$(gh_skill_agent_id "$tool")
     [[ -z "$agent_id" ]] && return
 
     echo ""
-    echo -e "${BOLD}── ${display_name}: gh agent skill ──${NC}"
+    echo -e "${BOLD}── ${display_name}: ${skill} agent skill ──${NC}"
 
     # Already installed for this agent? (list is scoped by --agent)
     local count
     count=$(gh skill list --agent "$agent_id" --scope user --json skillName 2>/dev/null \
-        | jq -r '[.[] | select(.skillName == "gh")] | length' 2>/dev/null || echo 0)
+        | jq -r --arg s "$skill" '[.[] | select(.skillName == $s)] | length' 2>/dev/null || echo 0)
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
 
     if [[ "$count" -gt 0 ]]; then
-        echo -e "  ${DIM}gh agent skill already installed, checking for updates${NC}"
-        if gh skill update gh; then
-            print_success "gh agent skill up to date"
+        if gh_skill_updated_this_run "$skill"; then
+            echo -e "  ${DIM}${skill} agent skill already installed, updated above${NC}"
+            return
+        fi
+        echo -e "  ${DIM}${skill} agent skill already installed, checking for updates${NC}"
+        # Mark before running: a failure would repeat for every later agent too.
+        _gh_skills_updated+="${skill} "
+        if gh skill update "$skill"; then
+            print_success "${skill} agent skill up to date"
         else
-            print_warning "gh skill update failed, see output above"
+            print_warning "gh skill update ${skill} failed, see output above"
         fi
         return
     fi
 
     echo ""
-    echo "  Install the upstream 'gh' agent skill from cli/cli?"
-    echo "  Teaches the agent to drive the GitHub CLI (structured output,"
-    echo "  pagination, repo targeting, search vs list, gh api fallback)."
+    echo "  Install the upstream '${skill}' agent skill from ${repo}?"
+    gh_skill_blurb "$skill"
     echo ""
-    if prompt_yes_no "  Install gh agent skill?"; then
-        if gh skill install cli/cli gh --agent "$agent_id" --scope user; then
-            print_success "Installed gh agent skill for ${display_name}"
+    if prompt_yes_no "  Install ${skill} agent skill?"; then
+        if gh skill install "$repo" "$skill" --agent "$agent_id" --scope user; then
+            print_success "Installed ${skill} agent skill for ${display_name}"
         else
-            print_warning "Failed to install gh agent skill for ${display_name}"
+            print_warning "Failed to install ${skill} agent skill for ${display_name}"
         fi
     else
-        print_info "Skipped gh agent skill for ${display_name}"
+        print_info "Skipped ${skill} agent skill for ${display_name}"
+    fi
+}
+
+# ---- gh stack extension installer -------------------------------------------
+#
+# GitHub's native stacked pull requests are driven by the official `gh stack`
+# extension (github/gh-stack): a chain of branches where each pull request
+# targets the one below it, merged bottom-up. The extension is agent-agnostic,
+# so it is offered once rather than per tool.
+
+configure_gh_stack_extension() {
+    echo ""
+    echo -e "${BOLD}── gh stack extension ──${NC}"
+
+    # Match the repo column: the command column reads "gh stack", not "gh-stack".
+    if gh extension list 2>/dev/null | grep -qF 'github/gh-stack'; then
+        echo -e "  ${DIM}gh-stack extension already installed, checking for updates${NC}"
+        if gh extension upgrade gh-stack; then
+            print_success "gh-stack extension up to date"
+        else
+            print_warning "gh extension upgrade gh-stack failed, see output above"
+        fi
+        return
+    fi
+
+    echo ""
+    echo "  Install the official 'gh stack' extension (github/gh-stack)?"
+    echo "  Adds GitHub's native stacked pull requests to the CLI: init, add,"
+    echo "  push, submit, view, sync, rebase, and bottom-up merge of a stack."
+    echo ""
+    if prompt_yes_no "  Install gh-stack extension?"; then
+        if gh extension install github/gh-stack; then
+            print_success "Installed gh-stack extension"
+        else
+            print_warning "Failed to install gh-stack extension, see output above"
+        fi
+    else
+        print_info "Skipped gh-stack extension"
     fi
 }
 
@@ -1188,19 +1265,27 @@ for tool in "${selected_tools[@]}"; do
     esac
 done
 
-# ---- install the upstream `gh` agent skill ---------------------------------
+# ---- install the `gh stack` extension ---------------------------------------
 
-# cli/cli publishes a `gh` agent skill that teaches coding agents how to drive
-# the GitHub CLI. Offer it for each selected agent (install, or update if
-# already present). Requires a gh new enough to have `gh skill` (preview).
+# Agent-agnostic, so it is offered once for the whole run rather than per tool.
+configure_gh_stack_extension
+
+# ---- install the upstream gh agent skills -----------------------------------
+
+# GitHub publishes `gh` (cli/cli) and `gh-stack` (github/gh-stack) as agent
+# skills. Offer each for every selected agent (install, or update if already
+# present). Requires a gh new enough to have `gh skill` (preview).
 if gh_skill_available; then
-    for tool in "${selected_tools[@]}"; do
-        case "$tool" in
-            claude)      configure_gh_skill "claude" "Claude Code" ;;
-            codex)       configure_gh_skill "codex" "Codex CLI" ;;
-            copilot)     configure_gh_skill "copilot" "Copilot CLI" ;;
-            antigravity) configure_gh_skill "antigravity" "Antigravity CLI" ;;
-        esac
+    for entry in "${GH_SKILLS[@]}"; do
+        read -r gh_skill_repo gh_skill_name <<< "$entry"
+        for tool in "${selected_tools[@]}"; do
+            case "$tool" in
+                claude)      configure_gh_skill "claude" "Claude Code" "$gh_skill_repo" "$gh_skill_name" ;;
+                codex)       configure_gh_skill "codex" "Codex CLI" "$gh_skill_repo" "$gh_skill_name" ;;
+                copilot)     configure_gh_skill "copilot" "Copilot CLI" "$gh_skill_repo" "$gh_skill_name" ;;
+                antigravity) configure_gh_skill "antigravity" "Antigravity CLI" "$gh_skill_repo" "$gh_skill_name" ;;
+            esac
+        done
     done
 fi
 
@@ -1352,5 +1437,10 @@ done
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
     echo ""
     echo -e "  Review loops: run ${BOLD}code-review-loop${NC} or ${BOLD}plan-review-loop${NC} from any project"
+fi
+
+if gh extension list 2>/dev/null | grep -qF 'github/gh-stack'; then
+    echo ""
+    echo -e "  Stacked PRs: run ${BOLD}gh stack init${NC} in a repo, then ${BOLD}gh stack add${NC} / ${BOLD}submit${NC}"
 fi
 echo ""
