@@ -110,6 +110,19 @@ has_marker() {
     grep -qF "$1" "$2" 2>/dev/null
 }
 
+# True when dotted numeric version $1 is older than $2.
+version_lt() {
+    [[ "$1" == "$2" ]] && return 1
+    local i a b
+    IFS=. read -ra a <<< "$1"
+    IFS=. read -ra b <<< "$2"
+    for i in 0 1 2; do
+        (( ${a[i]:-0} < ${b[i]:-0} )) && return 0
+        (( ${a[i]:-0} > ${b[i]:-0} )) && return 1
+    done
+    return 1
+}
+
 # Kimi Code keeps its user-level data (skills, mcp.json, config.toml) under
 # ~/.kimi-code, overridable with KIMI_CODE_HOME.
 kimi_home() {
@@ -588,6 +601,11 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
         feature_changes+=("teams")
     fi
+    # Only offer when no output style is set, so a user's explicit choice of a
+    # different style is never overridden.
+    if ! echo "$settings" | jq -e '.outputStyle' &>/dev/null; then
+        feature_changes+=("outputstyle")
+    fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
     fi
@@ -626,6 +644,7 @@ configure_claude_settings() {
                 websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
+                outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
             esac
@@ -638,6 +657,7 @@ configure_claude_settings() {
                     websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                    outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
                 esac
@@ -1139,6 +1159,75 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     done
     echo ""
     exit 1
+fi
+
+# ---- gh version check ------------------------------------------------------
+
+# /review-pr re-requests Copilot code review with `gh pr edit --add-reviewer
+# @copilot`, a special value added in gh 2.88.0. gh has no self-update (it only
+# prints a notice when a release is out), so check here and offer the upgrade.
+MIN_GH_VERSION="2.88.0"
+
+gh_version=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+# How the installed gh can be upgraded: Homebrew when it manages gh, winget on
+# Windows (the officially supported package manager there; choco and scoop are
+# community-maintained), otherwise the user's own package manager.
+gh_upgrade_via=""
+if command -v brew &>/dev/null && brew list gh &>/dev/null; then
+    gh_upgrade_via="brew"
+elif [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]] \
+    && command -v winget &>/dev/null \
+    && winget list --disable-interactivity --exact --id GitHub.cli --source winget &>/dev/null; then
+    # `winget list` only sees installs registered in Apps & Features that
+    # correlate to the GitHub.cli manifest (winget's own installs and the MSI).
+    # A scoop or portable gh is invisible to it, and `winget upgrade` would
+    # install a duplicate copy, so those fall through to the docs pointer.
+    gh_upgrade_via="winget"
+fi
+
+offer_gh_upgrade() {
+    local label ok=false
+    case "$gh_upgrade_via" in
+        brew)   label="Homebrew" ;;
+        winget) label="winget" ;;
+        *)
+            if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
+                print_info "Upgrade gh with your package manager (https://github.com/cli/cli/blob/trunk/docs/install_windows.md)"
+            else
+                print_info "Upgrade gh with your package manager (https://github.com/cli/cli#installation)"
+            fi
+            return
+            ;;
+    esac
+    if ! prompt_yes_no "  Upgrade gh with ${label} now?"; then
+        print_info "Skipped gh upgrade"
+        return
+    fi
+    case "$gh_upgrade_via" in
+        brew)   if brew upgrade gh; then ok=true; fi ;;
+        winget) if winget upgrade --id GitHub.cli --source winget; then ok=true; fi ;;
+    esac
+    if $ok; then
+        print_success "Upgraded gh to $(gh --version 2>/dev/null | head -1)"
+        if [[ "$gh_upgrade_via" == "winget" ]]; then
+            print_info "Open a new terminal window for the upgraded gh to take effect"
+        fi
+    else
+        print_warning "gh upgrade via ${label} failed; see output above"
+    fi
+}
+
+if [[ -n "$gh_version" ]] && version_lt "$gh_version" "$MIN_GH_VERSION"; then
+    print_warning "GitHub CLI $gh_version is older than $MIN_GH_VERSION, which /review-pr needs to re-request Copilot code review"
+    offer_gh_upgrade
+elif [[ "$gh_upgrade_via" == "brew" ]] && [[ -n "$(brew outdated --quiet gh 2>/dev/null)" ]]; then
+    # Best-effort, brew only: relies on brew's local metadata, so a stale
+    # `brew update` can miss a fresh release. winget has no equivalent cheap
+    # check (its list output is locale-dependent). The hard floor above is
+    # what matters and covers every platform.
+    print_info "A newer GitHub CLI is available (installed: ${gh_version:-unknown})"
+    offer_gh_upgrade
 fi
 
 # ---- detect installed tools -----------------------------------------------
