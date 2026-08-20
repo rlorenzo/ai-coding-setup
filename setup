@@ -588,6 +588,11 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
         feature_changes+=("teams")
     fi
+    # Only offer when no output style is set, so a user's explicit choice of a
+    # different style is never overridden.
+    if ! echo "$settings" | jq -e '.outputStyle' &>/dev/null; then
+        feature_changes+=("outputstyle")
+    fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
     fi
@@ -626,6 +631,7 @@ configure_claude_settings() {
                 websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
+                outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
             esac
@@ -638,6 +644,7 @@ configure_claude_settings() {
                     websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                    outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
                 esac
