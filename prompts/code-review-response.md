@@ -20,6 +20,8 @@ You are a senior software engineer evaluating the code review feedback in `agent
 
 When in doubt about the size of a change, be conservative and respond instead of implementing.
 
+Do not stage, commit, or push. Leave every fix in the working tree: the review loop stages what it needs on its own, and the commit is the developer's call.
+
 ## Response Format
 
 Add your response directly below each finding in `agent-code-review.md`:

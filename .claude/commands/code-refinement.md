@@ -13,3 +13,5 @@ Verify that the project's UI framework components and utility classes are used w
 Run the project's linting command and fix all reported errors and warnings. Discover the command from package scripts, a Makefile, CI config, or pre-commit config; if the project has no linter, note that and move on. Avoid using lint-suppression comments (e.g., eslint-disable, noqa, @ts-ignore) to make the lint pass unless absolutely necessary, and only with a clear justification in the code.
 
 Review tests and code coverage: check whether existing tests adequately cover the new or modified code, add tests for any gaps you find, and update any existing tests that must change to handle the new behavior correctly. When finished, ensure everything is ready for a high-quality code review.
+
+Do not stage, commit, or push. Leave every change in the working tree: the review loop stages what it needs on its own, and the commit is the developer's call.
