@@ -43,7 +43,7 @@ gh api graphql --paginate --slurp \
   | jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)]'
 ```
 
-**Auto-resolve:** first comment body matching an `$IGNORED_FILE` entry (`grep -qxF`) → resolve via `resolveReviewThread`, no classifying.
+**Auto-resolve:** first comment body matching an `$IGNORED_FILE` entry (`grep -qxF`) → resolve as `WONT_FIX` (see step 3), no classifying.
 
 Threads remain → step 3. Never re-request a bot while threads are open. Zero unresolved → step 5.
 
@@ -55,9 +55,29 @@ Read the referenced file and its context, then classify:
 - **Valid fix**: implement minimally. Must meet ALL: (1) real bug: wrong behavior, data loss, security, crash, race; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
 - **Nitpick / Low-value**: resolve WITHOUT implementing: style not enforced by a linter, docstrings on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append to `$IGNORED_FILE`, reply with a one-line rationale, resolve.
 
+Resolve every thread with the mutation below, passing the `resolutionReason` that matches the classification:
+
+| Classification | Reason |
+| --- | --- |
+| Valid fix implemented, or already addressed | `ADDRESSED` |
+| Nitpick, low-value, informational, or an `$IGNORED_FILE` auto-resolve | `WONT_FIX` |
+| Inaccurate | `INVALID` |
+
+```bash
+gh api graphql \
+  -f query='mutation($id:ID!,$reason:PullRequestReviewThreadResolutionReason) {
+    resolveReviewThread(input:{threadId:$id, resolutionReason:$reason}) { thread { isResolved } }
+  }' \
+  -f id="$THREAD_ID" -f reason=ADDRESSED \
+  --jq '.data.resolveReviewThread.thread.isResolved'
+```
+
+- `resolutionReason` is Copilot-specific (`PullRequestReviewThreadResolutionReason` is documented as the reason a Copilot review thread was resolved). Send it only when the thread's first comment author is `copilot-pull-request-reviewer`; for every other author drop the `-f reason=...` flag and leave the rest of the command as is. An unsupplied variable is fine, but `-f reason=` with an empty value fails validation.
+- The reason is write-only feedback to GitHub. `PullRequestReviewThread` exposes no field that reads it back, so never try to verify what you sent.
+
 ### 4. Push fixes
 
-Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed threads. Back to step 2.
+Stage, commit (`fix:`/`refactor:`/etc.), push, verify CI green, resolve fixed threads as `ADDRESSED`. Back to step 2.
 
 ### 5. Ensure bot review covers latest commit
 
