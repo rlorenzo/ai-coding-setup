@@ -51,17 +51,13 @@ Threads remain → step 3. Never re-request a bot while threads are open. Zero u
 
 Read the referenced file and its context, then classify:
 
-- **Already addressed / Informational / Inaccurate**: append body to `$IGNORED_FILE`, resolve (reply briefly if inaccurate).
-- **Valid fix**: implement minimally. Must meet ALL: (1) real bug: wrong behavior, data loss, security, crash, race; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
-- **Nitpick / Low-value**: resolve WITHOUT implementing: style not enforced by a linter, docstrings on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append to `$IGNORED_FILE`, reply with a one-line rationale, resolve.
+- **Already addressed**: append body to `$IGNORED_FILE`, resolve as `ADDRESSED`.
+- **Informational**: append body to `$IGNORED_FILE`, resolve as `WONT_FIX`.
+- **Inaccurate**: append body to `$IGNORED_FILE`, reply briefly, resolve as `INVALID`.
+- **Valid fix**: implement minimally, then resolve as `ADDRESSED` once step 4 has pushed it. Must meet ALL: (1) real bug: wrong behavior, data loss, security, crash, race; (2) net-simpler or complexity-neutral; (3) concrete, not speculative.
+- **Nitpick / Low-value**: resolve WITHOUT implementing: style not enforced by a linter, docstrings on clear code, subjective renames, unnecessary defensive checks, premature abstraction, "consider X instead of Y" where both work, type annotations beyond codebase norms. Append to `$IGNORED_FILE`, reply with a one-line rationale, resolve as `WONT_FIX`.
 
-Resolve every thread with the mutation below, passing the `resolutionReason` that matches the classification:
-
-| Classification | Reason |
-| --- | --- |
-| Valid fix implemented, or already addressed | `ADDRESSED` |
-| Nitpick, low-value, informational, or an `$IGNORED_FILE` auto-resolve | `WONT_FIX` |
-| Inaccurate | `INVALID` |
+Resolve with this mutation, substituting the reason the classification names:
 
 ```bash
 gh api graphql \
