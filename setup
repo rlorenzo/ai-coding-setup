@@ -1119,9 +1119,14 @@ install_scripts() {
 # ---- review gate hook ------------------------------------------------------
 #
 # bin/review-gate is a PreToolUse hook that denies an agent's `git commit` when
-# the staged change has no clean review on record. Opt-in, and wired only for
-# Claude Code: the other harnesses each take a different config shape, so their
-# wiring is documented in the README rather than guessed at here.
+# the staged change has no clean review on record. Still prompted, but the
+# prompt now defaults to installing: the hook ships in warn mode, so accepting
+# it logs unreviewed commits without ever blocking one, and a default that
+# leaves it uninstalled means the gate only protects the people who went
+# looking for it.
+#
+# Wired only for Claude Code: the other harnesses each take a different config
+# shape, so their wiring is documented in the README rather than guessed at.
 
 configure_review_gate_hook() {
     local gate="$HOME/.local/bin/review-gate"
@@ -1176,7 +1181,7 @@ configure_review_gate_hook() {
     echo "  REVIEW_GATE=block in ~/.ai-coding-setup.conf once you trust it."
     echo ""
 
-    if ! prompt_yes_no "  Install the review gate hook for Claude Code?" n; then
+    if ! prompt_yes_no "  Install the review gate hook for Claude Code?"; then
         print_info "Skipped review gate hook"
         return
     fi

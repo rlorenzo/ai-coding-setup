@@ -265,7 +265,7 @@ It ships in `warn` because the rubric is untested against your commits and a wro
 
 **Headless runs degrade to warn.** In CI, or under `AI_REVIEW_HEADLESS=1`, there is nobody to ask, and a gate that hard-blocks there deadlocks the build. Detection is explicit and never a TTY check: every harness spawns hooks with pipes on all three descriptors, so keying off `[ -t 0 ]` would degrade every interactive run too, and quietly turn the gate off everywhere while still looking installed.
 
-**Installation.** `./setup` offers to wire it into Claude Code, appending a `PreToolUse` hook to `~/.claude/settings.json` without disturbing hooks that are already there. The script speaks every harness's output shape via `--format`, but only Claude is wired automatically, because the other four take different config shapes and paths that are worth confirming against their current docs before writing into your config:
+**Installation.** `./setup` offers to wire it into Claude Code and defaults to yes, appending a `PreToolUse` hook to `~/.claude/settings.json` without disturbing hooks that are already there. Accepting it is safe: the gate ships in `warn` mode, so it logs an unreviewed commit and lets it through until you set `REVIEW_GATE=block`. Answer `n` at the prompt to skip it. The script speaks every harness's output shape via `--format`, but only Claude is wired automatically, because the other four take different config shapes and paths that are worth confirming against their current docs before writing into your config:
 
 ```json
 {
