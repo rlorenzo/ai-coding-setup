@@ -81,7 +81,8 @@ read_prompt_file() {
 
 # ---- config file loader ---------------------------------------------------
 
-# Load agent defaults from ~/.ai-coding-setup.conf.
+# Load defaults from ~/.ai-coding-setup.conf: the editor and reviewer agents,
+# and REVIEW_GATE (off|warn|block) for bin/review-gate.
 # Only sets EDITOR_AGENT / REVIEWER_AGENT if not already overridden by CLI.
 # Uses safe line-by-line parsing; never sources the file directly.
 # shellcheck disable=SC2034  # variables are used by sourcing scripts
@@ -103,6 +104,10 @@ load_config() {
             REVIEWER_AGENT=*)
                 value="${line#REVIEWER_AGENT=}"
                 REVIEWER_AGENT="${value//[\"\']/}"
+                ;;
+            REVIEW_GATE=*)
+                value="${line#REVIEW_GATE=}"
+                REVIEW_GATE="${value//[\"\']/}"
                 ;;
         esac
     done < "$config_file"
@@ -237,6 +242,12 @@ agent_command() {
 #   $3: allowed tools (only used by Claude; ignored by others)
 _dispatch_agent() {
     local agent="$1" prompt="$2" tools="${3:-}"
+    # Recursion guard for bin/review-gate. The loop itself never commits, but
+    # the editor agent it spawns is unconstrained and could decide to commit
+    # its own fixes; without this the gate would fire from inside the loop and
+    # offer to run the loop. Scoped to the call, so it never leaks into the
+    # developer's own shell.
+    local -x AI_REVIEW_GATE=off
     case "$agent" in
         claude)      run_claude "$prompt" "$tools" ;;
         codex)       run_codex "$prompt" ;;
@@ -504,6 +515,114 @@ format_elapsed() {
     elapsed_min=$((elapsed_secs / 60))
     elapsed_remainder=$((elapsed_secs % 60))
     printf '%dm %ds' "$elapsed_min" "$elapsed_remainder"
+}
+
+# ---- review gate state ----------------------------------------------------
+#
+# bin/review-gate answers "has this been reviewed" from a receipt written here.
+# All of it lives under $(git rev-parse --git-dir)/ai-review, so it is never
+# committed, is per-worktree, survives branch switches, and resolves correctly
+# in a linked worktree where .git is a file.
+
+# Number of receipts kept, newest first, so amend and reorder flows can still
+# match an older review.
+REVIEW_RECEIPT_KEEP=10
+
+# Print the absolute git directory, or fail outside a repository.
+# --absolute-git-dir rather than --git-dir plus a prefix: --git-dir returns a
+# relative path in the ordinary case but an absolute one in a linked worktree,
+# and on Git for Windows that absolute path is `C:/...`, which no leading-slash
+# test recognizes. Prefixing it there would build `C:/repo/C:/...`.
+review_gate_git_dir() {
+    local git_dir
+    git_dir=$(git rev-parse --absolute-git-dir 2>/dev/null) || git_dir=""
+    if [[ -z "$git_dir" ]]; then
+        # git < 2.13 has no --absolute-git-dir.
+        git_dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+        case "$git_dir" in
+            /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+            *) git_dir="$PWD/$git_dir" ;;
+        esac
+    fi
+    printf '%s\n' "$git_dir"
+}
+
+# Print the gate's state directory, creating it.
+review_gate_state_dir() {
+    local git_dir
+    git_dir=$(review_gate_git_dir) || return 1
+    mkdir -p "$git_dir/ai-review" 2>/dev/null || return 1
+    printf '%s\n' "$git_dir/ai-review"
+}
+
+# Print the current HEAD sha, or the literal "unborn" in a fresh repository.
+# git rev-parse HEAD exits 128 there, which would otherwise break both the
+# receipt writer and the gate on the very first commit.
+review_gate_head() {
+    git rev-parse --verify -q HEAD 2>/dev/null || printf 'unborn\n'
+}
+
+# Record that a review ran over the current index.
+# Written on every completed run, clean or not: a needs-review verdict is
+# useful evidence for the gate's deny reason.
+#   $1: verdict ("clean" or "needs-review")
+#   $2: cycles run
+#   $3: editor agent name
+#   $4: reviewer agent name
+write_review_receipt() {
+    local verdict="$1" cycles="${2:-0}" editor="${3:-}" reviewer="${4:-}"
+    command -v jq >/dev/null 2>&1 || return 0
+    [[ "$cycles" =~ ^[0-9]+$ ]] || cycles=0
+
+    local dir tree head existing tmp
+    dir=$(review_gate_state_dir) || return 0
+    # Fails on an unresolved merge conflict; there is nothing to vouch for then.
+    tree=$(git write-tree 2>/dev/null) || return 0
+    head=$(review_gate_head)
+
+    existing='[]'
+    if [[ -f "$dir/receipts.json" ]]; then
+        existing=$(jq -c 'if type == "array" then . else [] end' "$dir/receipts.json" 2>/dev/null) \
+            || existing='[]'
+    fi
+
+    # Write-then-rename inside the same directory, so a killed loop or two
+    # concurrent worktree runs cannot leave a half-written file behind.
+    tmp=$(mktemp "$dir/receipts.XXXXXX" 2>/dev/null) || return 0
+    if printf '%s' "$existing" | jq -c \
+        --arg tree "$tree" --arg head "$head" --arg verdict "$verdict" \
+        --argjson cycles "$cycles" --arg editor "$editor" --arg reviewer "$reviewer" \
+        --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        --argjson keep "$REVIEW_RECEIPT_KEEP" \
+        '[{index_tree: $tree, head: $head, verdict: $verdict, cycles: $cycles,
+           editor: $editor, reviewer: $reviewer, ts: $ts}] + . | .[0:$keep]' \
+        > "$tmp" 2>/dev/null; then
+        mv -f "$tmp" "$dir/receipts.json"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# Claim the loop's lock so the gate exempts commits made while it runs.
+# Records the PID and start time; the gate validates both, since an EXIT trap
+# does not run on SIGKILL and a stale lock would disable the gate silently.
+review_gate_lock_acquire() {
+    local dir tmp
+    dir=$(review_gate_state_dir) || return 0
+    tmp=$(mktemp "$dir/running.XXXXXX" 2>/dev/null) || return 0
+    if printf '%s\t%s\n' "$$" "$(date +%s)" > "$tmp"; then
+        mv -f "$tmp" "$dir/running" || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+    return 0
+}
+
+review_gate_lock_release() {
+    local git_dir
+    git_dir=$(review_gate_git_dir) || return 0
+    rm -f "$git_dir/ai-review/running" 2>/dev/null
+    return 0
 }
 
 # ---- artifact cleanup -----------------------------------------------------

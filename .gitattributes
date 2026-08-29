@@ -1,2 +1,12 @@
 # Enforce Unix line endings for all text files in this repo
 * text=auto eol=lf
+
+# Derived from .claude/commands/ by tools/generate; never hand-edited.
+# linguist-generated is what bin/review-gate reads to tell a generated
+# artifact from a source change when it classifies a staged diff.
+.codex/skills/** linguist-generated=true
+.copilot/skills/** linguist-generated=true
+.antigravity/skills/** linguist-generated=true
+.kimi-code/skills/** linguist-generated=true
+prompts/code-refinement.md linguist-generated=true
+prompts/code-review.md linguist-generated=true

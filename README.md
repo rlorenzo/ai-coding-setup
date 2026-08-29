@@ -163,7 +163,7 @@ Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory l
 
 ## Review Loops
 
-Two multi-agent feedback loops live in [bin/](bin/): `code-review-loop` (for staged code) and `plan-review-loop` (for plan documents). Each loop pairs an **editor** agent with a different **reviewer** agent and iterates until the reviewer is satisfied or `--max-iterations` is hit. Using two different models for editing and reviewing surfaces issues a single agent tends to miss in its own output.
+Two multi-agent feedback loops live in [bin/](bin/): `code-review-loop` (for staged code) and `plan-review-loop` (for plan documents), alongside `review-gate`, the hook that keeps an agent from committing before the first of those has run. Each loop pairs an **editor** agent with a different **reviewer** agent and iterates until the reviewer is satisfied or `--max-iterations` is hit. Using two different models for editing and reviewing surfaces issues a single agent tends to miss in its own output.
 
 Both scripts are installed onto your `PATH` by `./setup` and rely on the prompts in [prompts/](prompts/) (installed to `~/.local/share/ai-coding-setup/prompts/`).
 
@@ -228,6 +228,82 @@ plan-review-loop --reviewer claude --editor codex PLAN-feature.md
 
 **Outputs (project root):** the plan file is edited in place; `feedback-plan.md` (latest feedback, removed when reviewer is satisfied); `plan-review-summary.md` (narrative).
 
+### review-gate
+
+A hook that stops a coding agent from committing code nobody reviewed.
+
+Every harness has a pre-tool event that can deny a tool call. `review-gate` sits on that event, watches for a `git commit`, and answers one question in well under a second: does this staged change already have a clean review? If it does, or if the commit is not really a code change at all, the agent never sees the gate. If it does not, the gate denies the commit and hands the agent the staged diff, per-category line counts, and a rubric, and the agent either judges the change trivial and says so out loud, or asks you what to do.
+
+The gate never runs `code-review-loop` itself. That takes minutes and is designed to hand back to a human at the end; the gate is pure git plumbing, and the loop runs afterward as an ordinary foreground command if you pick that option.
+
+**What passes without a word:**
+
+- nothing staged, or an `--amend` that only rewords
+- a clean review receipt for exactly this index on exactly this base, which is what `code-review-loop` records when it finishes
+- a history rewrite: rebase, interactive rebase, cherry-pick, revert, or merge, including every `--continue` step. A twelve-commit rebase must not stop to ask twelve times
+- an index tree identical to `ORIG_HEAD` or `HEAD@{1}`, which catches a rewrite whose in-progress markers are already cleaned up
+- an unresolved merge conflict in the index, which means a merge is in progress anyway
+- `AI_REVIEW_GATE=off` on the command, or `REVIEW_GATE=off` in the config
+
+**What always gets stopped:** `git commit -a`, `git commit <path>`, and the `-o` / `--only` / `-i` / `--include` forms. They commit content that was not in the index when the gate ran, so a matching receipt describes something else. That check runs before every index-derived rule, or `git commit -a` with a clean index would sail through the empty-index check and land unreviewed work.
+
+**Modes**, set with `REVIEW_GATE` in `~/.ai-coding-setup.conf` or in the environment (the environment wins):
+
+| Mode | Behavior |
+| --- | --- |
+| `warn` | Default. Prints the reason and lets the commit through. |
+| `block` | Denies the commit and hands the agent the reason. |
+| `off` | Disabled. |
+
+It ships in `warn` because the rubric is untested against your commits and a wrong `block` is far more annoying than a wrong `warn`. Once a few weeks of warn output shows it is not crying wolf, switch to `block`.
+
+**Escape hatches**, in the order you are likely to want them:
+
+- `AI_REVIEW_GATE=off git commit -m "..."` bypasses one commit. In PowerShell, where that prefix form is a parse error, write it as `$env:AI_REVIEW_GATE = "off"; git commit -m "..."`. The gate reads the bypass off the command string rather than its own environment, so it has to sit on the same command as the commit either way.
+- The gate issues a single-use nonce with every block, scoped to the index as it stands. The agent uses it to act on its own trivial-change judgment: `AI_REVIEW_GATE=<nonce> git commit -m "..."`. Staging more work invalidates it, and it works once.
+- `REVIEW_GATE=off` in `~/.ai-coding-setup.conf` turns the gate off everywhere.
+
+**Headless runs degrade to warn.** In CI, or under `AI_REVIEW_HEADLESS=1`, there is nobody to ask, and a gate that hard-blocks there deadlocks the build. Detection is explicit and never a TTY check: every harness spawns hooks with pipes on all three descriptors, so keying off `[ -t 0 ]` would degrade every interactive run too, and quietly turn the gate off everywhere while still looking installed.
+
+**Installation.** `./setup` offers to wire it into Claude Code, appending a `PreToolUse` hook to `~/.claude/settings.json` without disturbing hooks that are already there. The script speaks every harness's output shape via `--format`, but only Claude is wired automatically, because the other four take different config shapes and paths that are worth confirming against their current docs before writing into your config:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "\"$HOME/.local/bin/review-gate\" --format=claude" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Available formats: `claude` and `codex` emit the decision nested under `hookSpecificOutput`; `copilot` and `antigravity` emit a flat `{"permissionDecision": ..., "permissionDecisionReason": ...}`; `kimi` is exit-code driven, blocking with exit 2 and the reason on stderr. The allow path is always silence and exit 0, never an affirmative `"allow"`: an affirmative allow from a `PreToolUse` hook would skip your own permission rules and auto-approve every shell command the agent runs.
+
+**Windows.** The gate is a Bash script, so it needs Git Bash, like the rest of this repo. Everything it calls is bundled with Git for Windows except `jq`, which you install separately; without `jq` the gate allows every commit rather than failing, so check that it is on `PATH` before trusting the gate there. Claude Code runs hook commands through Git Bash on Windows by default, falling back to PowerShell only when Git Bash is absent, so the Git Bash style path `./setup` writes into `~/.claude/settings.json` (`/c/Users/you/.local/bin/review-gate`) resolves as written.
+
+Three Windows specifics are worth knowing:
+
+- **The matcher has to name both shell tools.** Windows exposes a `PowerShell` tool alongside `Bash`, and a matcher of `Bash` alone lets every commit made through the other one straight past the gate. `./setup` writes `Bash|PowerShell`, and widens an existing `Bash`-only entry in place when you re-run it.
+- **The bypass takes PowerShell syntax there.** A bash `AI_REVIEW_GATE=off git commit ...` prefix is a parse error in PowerShell, so the gate reads the statement form too, and writes whichever one matches the tool the commit is coming from into its own deny message: `$env:AI_REVIEW_GATE = "off"; git commit ...`. Either way it has to ride on the same command as the commit. The gate is a separate process spawned before your command runs, so it never inherits a variable you set in an earlier call; it can only read what is on the command string in front of it.
+- **It costs about 150ms per shell call.** The hook fires on every command the agent runs, not just commits, and process startup under Git Bash is far slower than on macOS or Linux. The non-commit fast path exits before any git call or subshell, but bash itself still has to start. Measured here: roughly 160ms warm against 55ms for a bare `bash -c true`, and over a second on a cold file cache.
+
+`./setup` falls back to copying when `ln -s` cannot make a real symlink, which is the default on Windows unless Developer Mode is on. That works, but `~/.local/bin/review-gate` is then a snapshot rather than a link, so re-run `./setup` to pick up changes to the script.
+
+**Known blind spot:** a commit made inside a script the agent invokes is invisible, because the gate only ever sees the command the agent typed. Nothing short of a git-level hook closes that, and a git-level hook cannot ask a question, so it would only ever warn after the fact.
+
+**State** lives in `$(git rev-parse --git-dir)/ai-review/`, so it is never committed, is per-worktree, and survives branch switches:
+
+| File | Contents |
+| --- | --- |
+| `receipts.json` | The last 10 review results, newest first: index tree, HEAD, verdict, cycles, agents, timestamp. |
+| `nonce` | The outstanding single-use bypass and the index tree it was issued for. |
+| `running` | The active `code-review-loop`'s PID and start time. The gate exempts commits while the loop runs, and prunes the file when the PID is dead or the timestamp is too old to trust. |
+
 ### Configuration
 
 Defaults are `--editor claude --reviewer codex`. Override per-run with `-e` / `-r`, or persist defaults in `~/.ai-coding-setup.conf`:
@@ -235,6 +311,7 @@ Defaults are `--editor claude --reviewer codex`. Override per-run with `-e` / `-
 ```ini
 EDITOR_AGENT=claude
 REVIEWER_AGENT=codex
+REVIEW_GATE=warn
 ```
 
 Supported agents: `claude`, `codex`, `copilot`, `antigravity`, `kimi`. Only the agents you actually have installed need to be referenced.
@@ -250,6 +327,10 @@ Environment variables:
 | `CODE_REVIEW_LOOP_LOG_DIR` | `~/.cache/code-review-loop/<timestamp>` | Where `code-review-loop` writes its run logs. Setting it also turns off log pruning, on the grounds that a directory you named is yours to manage. |
 | `REVIEW_LOOP_LOG_DAYS` | `1` | Delete run logs older than this many days. Only applies to the default location. |
 | `AI_CODING_SETUP_PROMPTS_DIR` | `~/.local/share/ai-coding-setup/prompts` | Where the loops read their prompts from. |
+| `REVIEW_GATE` | `warn` | `review-gate` mode: `off`, `warn`, or `block`. Overrides the config file. |
+| `AI_REVIEW_GATE` | unset | `off` bypasses the gate for one invocation. Also carries the single-use nonce the gate issues. Read off the command string, as a `VAR=value` prefix or a PowerShell `$env:AI_REVIEW_GATE = "..."` statement, so it must sit on the same command as the commit. |
+| `AI_REVIEW_HEADLESS` | unset | `1` degrades the gate to warn-only. `code-review-loop` sets it for its own run. |
+| `REVIEW_GATE_LOCK_MAX_AGE` | `21600` | Seconds before the gate stops trusting a `code-review-loop` lock file and prunes it. |
 
 ### Shared prompts
 
@@ -396,6 +477,8 @@ Delete the command/skill from the corresponding directory (or uninstall the plug
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
 - Kimi Code: `~/.kimi-code/skills/` (or `$KIMI_CODE_HOME/skills/`)
+
+If you installed the review gate hook, remove its `PreToolUse` entry from `~/.claude/settings.json` and delete `~/.local/bin/review-gate`. Per-repository state under `.git/ai-review/` can go too; nothing else reads it.
 
 The setup script only manages commands it originally installed. The upstream extras are removed separately: `gh extension remove gh-stack` for the `gh stack` extension, and for the `gh`/`gh-stack` agent skills, delete their directories as described in [`gh` Agent Skills](#gh-agent-skills).
 
