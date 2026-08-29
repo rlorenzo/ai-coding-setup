@@ -7,6 +7,11 @@ agent-review-summary.md
 feedback-plan.md
 plan-review-summary.md
 
+# Plan documents written for plan-review-loop. Working artifacts, not
+# deliverables. Anchored to the root so the pattern cannot reach the prompts
+# of similar name in prompts/, which Windows checkouts match case-insensitively.
+/PLAN-*.md
+
 # Impeccable hook installer artifacts (machine-specific absolute paths)
 .claude/settings.local.json
 .codex/hooks.json

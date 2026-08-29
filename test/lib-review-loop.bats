@@ -540,23 +540,36 @@ make_run_dir() { # make_run_dir <root> <name> <days-old>
     [[ "$dir" == "$BATS_TEST_TMPDIR/deep/nested/root/"* ]]
 }
 
-@test "is_inside_dir resolves relative, trailing-slash and symlinked paths" {
+@test "is_inside_dir resolves relative and trailing-slash paths" {
     source_lib
     local root="$BATS_TEST_TMPDIR/root"
     mkdir -p "$root/logs" "$root/other"
     : > "$root/logs/a.log"
     : > "$root/other/b.txt"
-    ln -s "$root/logs" "$root/linked"
     cd "$root" || return 1
 
     run is_inside_dir "logs/a.log" "logs";      assert_success
     run is_inside_dir "logs/a.log" "logs/";     assert_success
     run is_inside_dir "logs/a.log" "$root/logs"; assert_success
-    run is_inside_dir "logs/a.log" "linked";    assert_success
     run is_inside_dir "other/b.txt" "logs";     assert_failure
     # An empty or missing directory is never a container.
     run is_inside_dir "logs/a.log" "";          assert_failure
     run is_inside_dir "logs/a.log" "$root/nope"; assert_failure
+}
+
+# Split out, because Git Bash copies rather than links unless Developer Mode is
+# on, which leaves no symlink to resolve. Detected by trying, not by testing the
+# platform name: a Windows box that can make real symlinks should still run it.
+@test "is_inside_dir resolves a symlinked directory" {
+    source_lib
+    local root="$BATS_TEST_TMPDIR/root"
+    mkdir -p "$root/logs"
+    : > "$root/logs/a.log"
+    ln -s "$root/logs" "$root/linked" 2>/dev/null || true
+    [ -L "$root/linked" ] || skip "no real symlink support here"
+    cd "$root" || return 1
+
+    run is_inside_dir "logs/a.log" "linked";    assert_success
 }
 
 # =========================================================================

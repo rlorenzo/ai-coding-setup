@@ -1116,6 +1116,88 @@ install_scripts() {
     echo -e "  ${BOLD}Scripts:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped"
 }
 
+# ---- review gate hook ------------------------------------------------------
+#
+# bin/review-gate is a PreToolUse hook that denies an agent's `git commit` when
+# the staged change has no clean review on record. Opt-in, and wired only for
+# Claude Code: the other harnesses each take a different config shape, so their
+# wiring is documented in the README rather than guessed at here.
+
+configure_review_gate_hook() {
+    local gate="$HOME/.local/bin/review-gate"
+    local settings_file="$HOME/.claude/settings.json"
+
+    # -x alone, deliberately: it follows the link, so a symlink to a real
+    # executable passes and a dangling one does not. Accepting -L too would
+    # wire a hook pointing at nothing, and a hook that cannot execute is worse
+    # than no hook.
+    [[ -x "$gate" ]] || return 0
+
+    echo ""
+    echo -e "${BOLD}── Code Review Gate ──${NC}"
+
+    mkdir -p "$HOME/.claude"
+    [[ -f "$settings_file" ]] || echo '{}' > "$settings_file"
+
+    if ! jq empty "$settings_file" 2>/dev/null; then
+        print_warning "$settings_file is not valid JSON, skipping"
+        return
+    fi
+
+    # Idempotent: any existing review-gate hook, wherever it sits in the array,
+    # means this is already wired. Earlier versions wired the matcher as "Bash"
+    # alone, which on Windows misses every commit the agent runs through the
+    # separate PowerShell tool, so those entries are widened in place.
+    if jq -e '[.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""]
+              | any(test("review-gate"))' "$settings_file" &>/dev/null; then
+        local widened
+        widened=$(jq '
+            .hooks.PreToolUse |= map(
+                if ([.hooks // [] | .[] | .command // ""] | any(test("review-gate")))
+                   and (.matcher == "Bash")
+                then .matcher = "Bash|PowerShell" else . end)' "$settings_file") || widened=""
+        if [[ -n "$widened" ]] && ! diff -q <(jq -S . "$settings_file") <(printf '%s\n' "$widened" | jq -S .) &>/dev/null; then
+            printf '%s\n' "$widened" | jq . > "$settings_file"
+            print_success "Widened review gate matcher to ${BOLD}Bash|PowerShell${NC}"
+        else
+            echo -e "  ${DIM}Review gate hook already configured${NC}"
+        fi
+        return
+    fi
+
+    echo ""
+    echo "  A PreToolUse hook that stops an agent from committing unreviewed code."
+    echo "  It inspects the staged diff, allows rebases, reverts, doc-only churn"
+    echo "  already reviewed, and anything code-review-loop signed off on, and"
+    echo "  otherwise hands the agent the diff so it can classify the change or"
+    echo "  ask you."
+    echo ""
+    echo -e "  Default mode is ${BOLD}warn${NC} (logs, never blocks). Switch to"
+    echo "  REVIEW_GATE=block in ~/.ai-coding-setup.conf once you trust it."
+    echo ""
+
+    if ! prompt_yes_no "  Install the review gate hook for Claude Code?" n; then
+        print_info "Skipped review gate hook"
+        return
+    fi
+
+    local updated
+    # The path is quoted: the harness parses this string with a shell, and a
+    # Windows profile directory ("C:\Users\First Last") would otherwise split
+    # into two arguments and execute nothing.
+    updated=$(jq --arg cmd "\"$gate\" --format=claude" '
+        .hooks = (.hooks // {})
+        | .hooks.PreToolUse = ((.hooks.PreToolUse // []) + [{
+            matcher: "Bash|PowerShell",
+            hooks: [{type: "command", command: $cmd}]
+          }])' "$settings_file") || {
+        print_warning "Could not update $settings_file, skipping"
+        return
+    }
+    printf '%s\n' "$updated" | jq . > "$settings_file"
+    print_success "Installed review gate hook (mode: ${BOLD}warn${NC})"
+}
+
 # ---- argument parsing ----------------------------------------------------
 
 while [[ $# -gt 0 ]]; do
@@ -1442,6 +1524,11 @@ if [[ -f "$_prompts_dest/plan-review.md" ]] \
     && [[ -f "$_prompts_dest/plan-review-followup.md" ]]; then
     review_loop_scripts+=("bin/plan-review-loop")
 fi
+# review-gate reads no prompts; it only needs the shared library, which is
+# installed alongside the loop scripts below.
+if [[ -f "bin/review-gate" ]] && [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
+    review_loop_scripts+=("bin/review-gate")
+fi
 
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
     # Install the shared library to ~/.local/lib/ (not bin/, since it's sourced, not executed)
@@ -1461,6 +1548,10 @@ if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
             || cp "$_lib_src" "$_lib_dest/lib-review-loop"
     fi
     install_scripts "bin" "${review_loop_scripts[@]}"
+    # Needs the symlink in place, so this runs after install_scripts.
+    if [[ " ${selected_tools[*]} " == *" claude "* ]]; then
+        configure_review_gate_hook
+    fi
 elif [[ -d "bin" ]]; then
     echo ""
     echo -e "  ${DIM}Review loop scripts require shared prompts, skipped${NC}"
@@ -1499,6 +1590,11 @@ EDITOR_AGENT=$_default_editor
 
 # Agent for reviewing (claude, codex, copilot, antigravity, kimi)
 REVIEWER_AGENT=$_default_reviewer
+
+# Code review gate (bin/review-gate): off, warn, or block.
+# warn logs an unreviewed commit and lets it through; block denies it and hands
+# the agent the diff so it can classify the change or ask you.
+REVIEW_GATE=warn
 CONF
         print_success "Created $config_file"
     else
@@ -1526,6 +1622,9 @@ done
 if [[ ${#review_loop_scripts[@]} -gt 0 ]]; then
     echo ""
     echo -e "  Review loops: run ${BOLD}code-review-loop${NC} or ${BOLD}plan-review-loop${NC} from any project"
+    if [[ " ${review_loop_scripts[*]} " == *" bin/review-gate "* ]]; then
+        echo -e "  Review gate:  set ${BOLD}REVIEW_GATE=block${NC} in ~/.ai-coding-setup.conf to enforce it"
+    fi
 fi
 
 if gh extension list 2>/dev/null | grep -qF 'github/gh-stack'; then

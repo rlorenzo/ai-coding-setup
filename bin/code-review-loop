@@ -166,7 +166,22 @@ fi
 
 # ---- temp directory with cleanup -----------------------------------------
 setup_temp "code-review-loop"
-trap cleanup_temp EXIT
+
+cleanup_run() {
+    cleanup_temp
+    review_gate_lock_release
+}
+trap cleanup_run EXIT
+
+# Tell bin/review-gate this loop is running, so an agent it spawns that decides
+# to commit its own fixes cannot trip the gate from inside the loop. This
+# survives an agent that sanitizes its environment, which the AI_REVIEW_GATE
+# export in run_agent does not.
+review_gate_lock_acquire
+
+# Agents spawned from here have no user to ask, so the gate degrades to
+# warn-only for the whole run rather than deadlocking on a question.
+export AI_REVIEW_HEADLESS=1
 
 # ---- run logs -------------------------------------------------------------
 # Outside TMPDIR_REVIEW, which the EXIT trap wipes, and outside the project,
@@ -413,6 +428,13 @@ if $is_clean; then
 else
     final_status="MAX ITERATIONS REACHED - some issues remain"
 fi
+
+# ---- review receipt ------------------------------------------------------
+# Recorded before the summary step, which only writes agent-review-summary.md
+# and so leaves the index exactly as the developer will commit it. This is what
+# lets bin/review-gate answer "has this been reviewed" for the retried commit.
+if $is_clean; then receipt_verdict="clean"; else receipt_verdict="needs-review"; fi
+write_review_receipt "$receipt_verdict" "$iteration" "$EDITOR_AGENT" "$REVIEWER_AGENT"
 
 write_step "Final" "$EDITOR_AGENT: Writing improvement summary"
 # Clear any summary left by a previous run so the post-run existence check
