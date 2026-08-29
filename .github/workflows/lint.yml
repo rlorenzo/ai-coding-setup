@@ -19,3 +19,24 @@ jobs:
         with:
           python-version: "3.x"
       - uses: pre-commit/action@v3.0.1
+
+  # The scripts here are Bash, but they run under Git Bash on Windows too, and
+  # bin/review-gate in particular has to cope with the `C:\...` paths and the
+  # separate PowerShell tool a Windows harness hands it. Only the test suite
+  # runs here; shellcheck and markdownlint are platform-independent and already
+  # covered above.
+  test-windows:
+    name: BATS on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Give git an identity for the throwaway repos the tests build
+        shell: bash
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name CI
+      - name: Run BATS under Git Bash
+        shell: bash
+        run: test/run
