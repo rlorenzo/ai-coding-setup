@@ -77,9 +77,7 @@ state_dir() { printf '%s\n' "$REPO/.git/ai-review"; }
 write_receipt() { # write_receipt <verdict>
     (
         cd "$REPO" || exit 1
-        unset _LIB_REVIEW_LOOP_LOADED
-        # shellcheck source=lib/lib-review-loop
-        source "$PROJECT_ROOT/lib/lib-review-loop"
+        source_lib
         write_review_receipt "$1" 1 claude codex
     )
 }
@@ -391,6 +389,36 @@ setup_gate() {
     run gate 'git commit -am "x"'
     assert_denied
     assert_output --partial 'commits content beyond the index'
+}
+
+# A CR is not whitespace to the tokenizer, so a staging flag ending a CRLF line
+# matched no flag case and the commit read as plain. Real on Windows, where jq
+# hands back CRLF.
+@test "a staging flag ending a CRLF line is still read" {
+    setup_gate; mkrepo
+    run gate "$(printf 'git commit -m x --all\r\necho done')"
+    assert_denied
+    assert_output --partial 'commits content beyond the index'
+}
+
+@test "a CRLF line break still separates commands" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf 'echo hi\r\ngit commit -m x')"
+    assert_denied
+}
+
+@test "--interactive is reported as --interactive, not --patch" {
+    setup_gate; mkrepo; stage_code
+    run gate 'git commit --interactive -m "x"'
+    assert_denied
+    assert_output --partial 'beyond the index (--interactive)'
+}
+
+@test "--patch is reported as --patch" {
+    setup_gate; mkrepo; stage_code
+    run gate 'git commit --patch -m "x"'
+    assert_denied
+    assert_output --partial 'beyond the index (--patch)'
 }
 
 @test "--only forces a miss" {
@@ -748,17 +776,13 @@ EDITOR
     setup_gate; mkrepo; stage_code
     (
         cd "$REPO" || exit 1
-        unset _LIB_REVIEW_LOOP_LOADED
-        # shellcheck source=lib/lib-review-loop
-        source "$PROJECT_ROOT/lib/lib-review-loop"
+        source_lib
         review_gate_lock_acquire
     )
     [ -f "$(state_dir)/running" ]
     (
         cd "$REPO" || exit 1
-        unset _LIB_REVIEW_LOOP_LOADED
-        # shellcheck source=lib/lib-review-loop
-        source "$PROJECT_ROOT/lib/lib-review-loop"
+        source_lib
         review_gate_lock_release
     )
     [ ! -f "$(state_dir)/running" ]
@@ -827,6 +851,27 @@ EDITOR
     run gate 'git commit -m "add app"'
     assert_warned
     [ ! -f "$(state_dir)/nonce" ]
+}
+
+@test "warn mode reports the diagnosis but not the decision menu" {
+    setup_gate; mkrepo; stage_code
+    export REVIEW_GATE=warn
+    run gate 'git commit -m "add app"'
+    assert_warned
+    assert_output --partial 'Staged diff:'
+    assert_output --partial 'Warn mode, so this commit proceeds'
+    # In warn mode the commit already proceeds, so there is nothing to pick.
+    refute_output --partial 'Classify the change'
+    refute_output --partial 'AskUserQuestion'
+}
+
+@test "block mode keeps the decision menu" {
+    setup_gate; mkrepo; stage_code
+    run gate 'git commit -m "add app"'
+    assert_denied
+    assert_output --partial 'Classify the change'
+    assert_output --partial 'AskUserQuestion'
+    refute_output --partial 'Warn mode, so this commit proceeds'
 }
 
 # =========================================================================

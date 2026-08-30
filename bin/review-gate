@@ -73,7 +73,9 @@ esac
 # This hook fires on every shell call the agent makes, which is overwhelmingly
 # ls, cat, and test runs. One substring test before any parsing, subshell, or
 # git call keeps the common case to a read and a compare.
-INPUT=$(cat)
+# `read -d ''` rather than $(cat), which would fork one of those subshells per
+# call. It returns non-zero at EOF, so the guard tests the variable, not $?.
+IFS= read -r -d '' INPUT
 case "$INPUT" in
     *commit*) ;;
     *) exit 0 ;;
@@ -177,10 +179,31 @@ command -v jq >/dev/null 2>&1 || allow
 
 # Field names differ per harness, so try the documented shapes in turn rather
 # than binding to one. No command field means nothing to gate.
-COMMAND=$(printf '%s' "$INPUT" | jq -r '
-    (.tool_input.command // .tool_input.cmd // .tool_input.script
-     // .params.command // .arguments.command // .command // "")
-    | if type == "array" then join(" ") else tostring end' 2>/dev/null) || allow
+#
+# One jq for all three, since each invocation reparses the whole document. The
+# command goes last: it may contain newlines that the tokenizer needs as
+# separators. An empty one leaves no third line, hence the _REST re-test.
+#
+# CRLF is normalized first. jq is a native Windows binary under Git Bash and
+# ends its lines CRLF, and $(...) strips only the trailing one. A CR on the cwd
+# fails the -d test below, pointing the gate at $PWD; a CR on a staging flag
+# makes `--all<CR>` match no case below, so `git commit --all` reads as a plain
+# commit and is allowed. Nothing runs COMMAND, so rewriting it is free.
+HOOK_FIELDS=$(jq -r '
+    ((.cwd // .workspace // .project_dir // "") | tostring),
+    ((.tool_name // .toolName // .tool // "") | tostring),
+    ((.tool_input.command // .tool_input.cmd // .tool_input.script
+      // .params.command // .arguments.command // .command // "")
+     | if type == "array" then join(" ") else tostring end)' \
+    <<<"$INPUT" 2>/dev/null) || allow
+HOOK_FIELDS=${HOOK_FIELDS%$'\r'}
+HOOK_FIELDS=${HOOK_FIELDS//$'\r'$'\n'/$'\n'}
+HOOK_CWD=${HOOK_FIELDS%%$'\n'*}
+_REST=${HOOK_FIELDS#*$'\n'}
+TOOL_NAME=${_REST%%$'\n'*}
+COMMAND=${_REST#*$'\n'}
+[[ "$COMMAND" == "$_REST" ]] && COMMAND=""
+
 [[ -n "$COMMAND" && "$COMMAND" != "null" ]] || allow
 case "$COMMAND" in
     *commit*) ;;
@@ -192,7 +215,6 @@ esac
 # incompatible syntax for the very thing the gate asks the agent to type: a
 # bash `VAR=value command` prefix is a hard parse error in PowerShell. Absent
 # or unrecognized means POSIX, which is every other platform.
-TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '(.tool_name // .toolName // .tool // "")' 2>/dev/null) || TOOL_NAME=""
 SHELL_KIND="posix"
 case "$TOOL_NAME" in
     PowerShell|powershell|Powershell|pwsh|PowerShellTool) SHELL_KIND="powershell" ;;
@@ -210,7 +232,6 @@ with_gate() { # with_gate <value> <command>
     fi
 }
 
-HOOK_CWD=$(printf '%s' "$INPUT" | jq -r '(.cwd // .workspace // .project_dir // "")' 2>/dev/null) || HOOK_CWD=""
 [[ "$HOOK_CWD" == "null" ]] && HOOK_CWD=""
 # A Windows harness reports `C:\Users\...`, which Git Bash cannot stat. The
 # forward-slash form it can, so try that before falling back to the hook
@@ -477,7 +498,7 @@ analyze_segment() {
             --all)     OUTSIDE_INDEX="--all" ;;
             --include) OUTSIDE_INDEX="--include" ;;
             --only)    OUTSIDE_INDEX="--only" ;;
-            --patch|--interactive) OUTSIDE_INDEX="--patch" ;;
+            --patch|--interactive) OUTSIDE_INDEX="$t" ;;
             --pathspec-from-file*) OUTSIDE_INDEX="--pathspec-from-file" ;;
             # --amend outside a rebase leaves the index unchanged, so a
             # matching receipt stays valid and it needs no special case.
@@ -594,10 +615,10 @@ STATE_DIR="$GIT_DIR_PATH/ai-review"
 # process's environment; the environment form is handled earlier.
 [[ "$GATE_INLINE" == "off" ]] && allow
 
-# Tier 1.4: a history rewrite is in progress. These markers cover rebase,
-# interactive rebase, cherry-pick, revert, and merge, including every
-# --continue step and the amend a rebase stops for. A twelve-commit rebase
-# must not stop to ask twelve times.
+# Tier 1.4: git is mid-operation. These markers cover rebase, interactive
+# rebase, cherry-pick, revert, merge, and bisect, including every --continue
+# step and the amend a rebase stops for. A twelve-commit rebase must not stop
+# to ask twelve times.
 for _marker in rebase-merge rebase-apply CHERRY_PICK_HEAD MERGE_HEAD REVERT_HEAD BISECT_LOG; do
     [[ -e "$GIT_DIR_PATH/$_marker" ]] && allow
 done
@@ -607,9 +628,12 @@ done
 # the loop. The lock is validated, not merely observed: an EXIT trap does not
 # run on SIGKILL or a reboot, and a stale file would disable the gate forever
 # in exactly the situation where nobody thinks to look.
+# Six hours: longer than any real review loop, short enough to expire a lock
+# left behind by a reboot the same day.
 LOCK_MAX_AGE=${REVIEW_GATE_LOCK_MAX_AGE:-21600}
 if [[ -f "$STATE_DIR/running" ]]; then
-    _lock=$(cat "$STATE_DIR/running" 2>/dev/null) || _lock=""
+    # A builtin read rather than $(cat): one line, no fork.
+    _lock=""; read -r _lock < "$STATE_DIR/running" 2>/dev/null
     _lock_pid=${_lock%%	*}
     _lock_ts=${_lock##*	}
     _now=$(date +%s)
@@ -638,7 +662,7 @@ EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # so an agent that stages more work cannot reuse it, and the agent's own
 # re-run after a trivial-change judgment does not trip the same deny forever.
 if [[ -n "$GATE_INLINE" && -f "$STATE_DIR/nonce" ]]; then
-    _nonce_line=$(cat "$STATE_DIR/nonce" 2>/dev/null) || _nonce_line=""
+    _nonce_line=""; read -r _nonce_line < "$STATE_DIR/nonce" 2>/dev/null
     _nonce_value=${_nonce_line%%	*}
     _nonce_tree=${_nonce_line##*	}
     if [[ -n "$_nonce_value" && "$GATE_INLINE" == "$_nonce_value" && "$_nonce_tree" == "$INDEX_TREE" ]]; then
@@ -734,51 +758,60 @@ if [[ -n "$PATHS" ]]; then
                  -e 's/: linguist-generated: true$//p') || GENERATED_LIST=""
 fi
 
+# Newline-delimited on both ends, so membership is a substring match. Built
+# once rather than forking grep twice for every file in the diff.
+GENERATED_SET=""
+[[ -n "$GENERATED_LIST" ]] && GENERATED_SET=$'\n'"$GENERATED_LIST"$'\n'
+
+# Sets CATEGORY rather than printing it: no subshell per changed file.
 classify_path() {
     local p="$1"
-    if [[ -n "$GENERATED_LIST" ]] && printf '%s\n' "$GENERATED_LIST" | grep -qxF "$p"; then
-        printf 'generated'; return 0
-    fi
+    CATEGORY=generated
+    [[ -n "$GENERATED_SET" && "$GENERATED_SET" == *$'\n'"$p"$'\n'* ]] && return 0
     case "$p" in
         node_modules/*|*/node_modules/*|vendor/*|*/vendor/*|dist/*|*/dist/*|build/*|*/build/*|\
         *.min.js|*.min.css|*.lock|package-lock.json|pnpm-lock.yaml|\
         *.pb.go|*_pb2.py|*_pb2.pyi|*.generated.*|*.g.dart|*.snap)
-            printf 'generated'; return 0 ;;
+            return 0 ;;
     esac
+    CATEGORY=tests
     case "$p" in
         test/*|tests/*|*/test/*|*/tests/*|spec/*|*/spec/*|\
         *_test.*|*.test.*|*_spec.*|*.spec.*|test_*.py|*.bats)
-            printf 'tests'; return 0 ;;
+            return 0 ;;
     esac
+    CATEGORY=docs
     case "$p" in
         docs/*|*/docs/*|*.md|*.mdx|*.rst|*.txt|*.adoc|LICENSE|LICENSE.*|CHANGELOG*)
-            printf 'docs'; return 0 ;;
+            return 0 ;;
     esac
-    printf 'code'
+    CATEGORY=code
 }
 
 # Four counter pairs rather than an associative array: macOS still ships
 # bash 3.2, which has none.
 _add_code=0 _del_code=0 _add_tests=0 _del_tests=0
 _add_docs=0 _del_docs=0 _add_generated=0 _del_generated=0
+# Keeps the reason readable; the count below still reports the full total.
+PATH_LIST_MAX=40
 PATH_LINES=""
 FILE_COUNT=0
 
 while IFS=$'\t' read -r _a _d _p; do
     [[ -n "$_p" ]] || continue
     (( FILE_COUNT++ ))
-    _cat=$(classify_path "$_p")
+    classify_path "$_p"; _cat="$CATEGORY"
     # A binary file reports "-" for both counts.
     [[ "$_a" =~ ^[0-9]+$ ]] || _a=0
     [[ "$_d" =~ ^[0-9]+$ ]] || _d=0
     eval "_add_$_cat=\$(( _add_$_cat + _a ))"
     eval "_del_$_cat=\$(( _del_$_cat + _d ))"
-    if (( FILE_COUNT <= 40 )); then
+    if (( FILE_COUNT <= PATH_LIST_MAX )); then
         PATH_LINES+=$(printf '  %-56s %s' "$_p" "$_cat")$'\n'
     fi
 done <<< "$NUMSTAT"
 
-(( FILE_COUNT > 40 )) && PATH_LINES+="  ... and $(( FILE_COUNT - 40 )) more"$'\n'
+(( FILE_COUNT > PATH_LIST_MAX )) && PATH_LINES+="  ... and $(( FILE_COUNT - PATH_LIST_MAX )) more"$'\n'
 
 COUNT_LINES=""
 for _k in code tests docs generated; do
@@ -810,6 +843,7 @@ if [[ "$MODE" == "block" ]]; then
     fi
 fi
 
+# Enough to recognize the command without a long -m body crowding out the diff.
 SHORT_COMMAND="$COMMAND"
 (( ${#SHORT_COMMAND} > 400 )) && SHORT_COMMAND="${SHORT_COMMAND:0:400}..."
 
@@ -835,7 +869,19 @@ Lines changed by category:
 $COUNT_LINES
 Paths:
 ${PATH_LINES:-  (none)}
-Review receipt: $RECEIPT_STATUS
+Review receipt: $RECEIPT_STATUS"
+
+# The diagnosis above is worth printing in either mode. Below it the agent is
+# asked to decide something warn mode has already decided.
+if [[ "$MODE" != "block" ]]; then
+    REASON+="
+
+Warn mode, so this commit proceeds. Set REVIEW_GATE=block in
+~/.ai-coding-setup.conf to have the gate stop it instead."
+    miss "$REASON"
+fi
+
+REASON+="
 
 Classify the change, then take exactly one of these actions.
 
