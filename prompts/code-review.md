@@ -44,7 +44,7 @@ Write the following structure into `agent-code-review.md`. `N` is the review ite
 
 - One paragraph on overall risk and clarity.
 - Finding counts: High X, Medium Y, Low Z.
-- If no High or Medium remain and no Low blockers, state: **Verdict: good to go**. Automation depends on detecting this exact string.
+- If no High or Medium remain and no Low blockers, close the Summary with **Verdict: good to go** -- on its own line, or as the last sentence of the final paragraph. Automation detects this exact string, so do not hedge it with trailing prose ("good to go, but ...").
 
 ## Findings
 

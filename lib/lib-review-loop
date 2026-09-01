@@ -334,12 +334,17 @@ test_review_clean() {
     local content
     content=$(<"$REVIEW_FILE")
 
-    # Only a verdict line of its own signals clean.  Emphasis is stripped so
-    # "**Verdict: good to go**" and "**Verdict:** good to go" both match; the
-    # anchors keep both quoting prose ("the report says Verdict: good to go")
-    # and hedged prose ("Verdict: good to go, but ...") from counting.
+    # The verdict must open a line -- optionally after a bullet, quote or heading
+    # marker -- or close a sentence at the end of one, which is where reviewers
+    # asked to "state it in the Summary" actually put it.  Emphasis is stripped
+    # so "**Verdict: good to go**" and "**Verdict:** good to go" both match.
+    #
+    # What still must not count: quoting prose ("the report says Verdict: good
+    # to go"), because "says " is not a sentence boundary, and hedged prose
+    # ("Verdict: good to go, but ..."), because the trailing anchor allows only
+    # an optional "." or "!" after the phrase.
     if printf '%s\n' "$content" | tr -d '*' \
-        | grep -qiE '^[[:space:]]*([-+][[:space:]]*)?verdict[[:space:]]*:[[:space:]]*good to go[[:space:]]*[.!]?[[:space:]]*$'; then
+        | grep -qiE '(^[[:space:]]*([-+>#]+[[:space:]]*)?|[.!?][[:space:]]+)verdict[[:space:]]*:[[:space:]]*good to go[[:space:]]*[.!]?[[:space:]]*$'; then
         return 0
     fi
 
