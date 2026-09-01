@@ -304,6 +304,42 @@ EOF
     assert_failure
 }
 
+# The prompts ask the reviewer to state the verdict "in the Summary", and agents
+# oblige by ending the summary paragraph with it.  Requiring a line of its own
+# made every such review read as unclean: the loop then burned all five cycles on
+# an already-clean diff and reported MAX ITERATIONS REACHED.
+@test "test_review_clean accepts a verdict closing a summary paragraph" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "The suite passes and linters are clean. Finding counts: High 0, Medium 0, Low 0. **Verdict: good to go**." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "test_review_clean accepts a verdict after a sentence on a heading line" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "## Verdict: good to go" > "$REVIEW_FILE"
+    run test_review_clean
+    assert_success
+}
+
+@test "test_review_clean rejects a paragraph verdict hedged with trailing prose" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "All checks ran. **Verdict: good to go, but 2 High findings remain**." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_failure
+}
+
+@test "test_review_clean still ignores a mid-sentence verdict after a period" {
+    source_lib
+    REVIEW_FILE="$TEST_TMPDIR/review.md"
+    echo "Re-run it. The report will say Verdict: good to go." > "$REVIEW_FILE"
+    run test_review_clean
+    assert_failure
+}
+
 @test "build_improvement_prompt includes all parameters" {
     source_lib
     run build_improvement_prompt "/path/to/plan.md" "/path/to/feedback.md" "codex" "2" "5"

@@ -12,4 +12,4 @@ Rules:
 - Do not repeat findings that were addressed, or that the developer declined with a reasonable justification.
 - Remove completed items; report only new or still-unresolved findings.
 - Overwrite `agent-code-review.md` using the same structured report format as the initial review (Summary with finding counts, Findings section, etc.), with the iteration number provided in your instructions.
-- Apply the same severity definitions as the initial review. If no High or Medium issues remain and no Low severity blockers (a Low blocks only when it violates an explicit project rule), state in the Summary: **Verdict: good to go**.
+- Apply the same severity definitions as the initial review. If no High or Medium issues remain and no Low severity blockers (a Low blocks only when it violates an explicit project rule), close the Summary with **Verdict: good to go** -- on its own line, or as the last sentence of the final paragraph, never hedged with trailing prose.
