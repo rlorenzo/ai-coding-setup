@@ -559,6 +559,11 @@ install_commands() {
 
 # ---- Claude Code settings configuration ------------------------------------
 
+# Status line that mirrors the real plan quota to ~/.claude/rate_limits.json so
+# skills (efficient-orchestration) can read it. jq is already a setup dependency.
+# shellcheck disable=SC2016
+CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
+
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
 
@@ -609,6 +614,15 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
     fi
+    # Only set a status line when none exists; a custom one gets a manual hint
+    # below instead of being rewritten.
+    if ! echo "$settings" | jq -e '.statusLine' &>/dev/null; then
+        feature_changes+=("statusline")
+    elif ! echo "$settings" | jq -r '.statusLine.command // ""' | grep -q 'rate_limits.json'; then
+        echo ""
+        print_info "You already have a custom statusLine. To let skills read your real plan quota, prepend this to its command:"
+        echo -e "  ${DIM}input=\$(cat); printf '%s' \"\$input\" | jq -c '.rate_limits // {}' > \"\$HOME/.claude/rate_limits.json\"; printf '%s' \"\$input\" | <your existing command>${NC}"
+    fi
     if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
         if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_USE_POWERSHELL_TOOL' &>/dev/null; then
             feature_changes+=("powershell")
@@ -646,6 +660,7 @@ configure_claude_settings() {
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
+                statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
             esac
         done
@@ -659,6 +674,7 @@ configure_claude_settings() {
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
+                    statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
                 esac
             done
