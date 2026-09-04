@@ -345,6 +345,105 @@ setup_gate() {
     refute_output --partial 'commits content beyond the index'
 }
 
+# =========================================================================
+# Heredoc bodies.
+#
+# The way an agent writes a multi-paragraph commit message, and the way the
+# tokenizer used to lose track of where the shell syntax was.
+# =========================================================================
+
+@test "an apostrophe in a heredoc commit message does not break the parse" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "cat > msg.txt <<'EOF'" \
+        "fix: explain the gate's message" \
+        "EOF" \
+        "git commit -F msg.txt")"
+    assert_denied
+    # The old failure: an unbalanced-quote warning instead of the real reason.
+    refute_output --partial 'could not be parsed'
+    assert_output --partial 'Staged diff:'
+}
+
+@test "a staging flag quoted inside a heredoc body is not read as a flag" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "cat > msg.txt <<'EOF'" \
+        "docs: warn that git commit -a bypasses the index" \
+        "EOF" \
+        "git commit -F msg.txt")"
+    assert_denied
+    refute_output --partial 'commits content beyond the index'
+}
+
+@test "a real staging flag after a heredoc is still read" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "cat > msg.txt <<'EOF'" \
+        "docs: something" \
+        "EOF" \
+        "git commit -a -F msg.txt")"
+    assert_denied
+    assert_output --partial 'commits content beyond the index'
+}
+
+@test "a tab-indented <<- delimiter closes its body" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "cat > msg.txt <<-'EOF'" \
+        "	fix: the gate's message" \
+        "	EOF" \
+        "git commit -a -F msg.txt")"
+    assert_denied
+    # The body ended, so the -a on the next line was read.
+    assert_output --partial 'commits content beyond the index'
+}
+
+@test "a herestring is not mistaken for a heredoc" {
+    setup_gate; mkrepo; stage_code
+    # <<< takes no body. Swallowing the rest as one would hide the commit.
+    run gate "$(printf '%s\n' \
+        "grep -q x <<< \"nothing to see\"" \
+        "git commit -a -m x")"
+    assert_denied
+    assert_output --partial 'commits content beyond the index'
+}
+
+@test "two heredocs opened on one line each get their own body" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "diff <(cat <<'A') <(cat <<'B')" \
+        "git commit -a -m decoy" \
+        "A" \
+        "git commit -a -m decoy" \
+        "B" \
+        "git commit -m real")"
+    assert_denied
+    # Both bodies are data. Only the last line is a commit, and it has no -a.
+    refute_output --partial 'commits content beyond the index'
+}
+
+@test "an unterminated heredoc still finds the commit that opened it" {
+    setup_gate; mkrepo; stage_code
+    run gate "$(printf '%s\n' \
+        "git commit -a -F - <<'EOF'" \
+        "fix: no closing delimiter")"
+    assert_denied
+    assert_output --partial 'commits content beyond the index'
+}
+
+@test "a quoted << that swallows the commit denies rather than losing it" {
+    setup_gate; mkrepo; stage_code
+    # Not a heredoc at all, but the opener scan cannot see quoting, so it reads
+    # `<<file>>` as one and eats every line after it. Silently allowing the
+    # commit it ate is the one outcome the gate must not have.
+    run gate "$(printf '%s\n' \
+        "printf 'usage: cmd <<file>>' > doc.txt" \
+        "git commit -m 'add doc'")"
+    assert_denied
+    assert_output --partial 'could not be parsed'
+}
+
 @test "an unparseable command mentioning git and commit denies rather than guesses" {
     setup_gate; mkrepo
     # Unbalanced quote: the git word is swallowed into one opaque token.
@@ -853,16 +952,30 @@ EDITOR
     [ ! -f "$(state_dir)/nonce" ]
 }
 
-@test "warn mode reports the diagnosis but not the decision menu" {
+@test "warn mode reports the diagnosis and the rubric but not the decision menu" {
     setup_gate; mkrepo; stage_code
     export REVIEW_GATE=warn
     run gate 'git commit -m "add app"'
     assert_warned
     assert_output --partial 'Staged diff:'
-    assert_output --partial 'Warn mode, so this commit proceeds'
-    # In warn mode the commit already proceeds, so there is nothing to pick.
-    refute_output --partial 'Classify the change'
+    assert_output --partial 'Warn mode, so nothing here stops the commit'
+    # Warn cannot stop the commit, but it still has to say which changes want a
+    # review first, or "proceeds" is the only instruction the agent reads.
+    assert_output --partial 'Classify the change'
+    assert_output --partial 'NON-TRIVIAL, review first'
+    # Nothing to pick, and no nonce to offer, once the commit already proceeds.
     refute_output --partial 'AskUserQuestion'
+    refute_output --partial 'single-use nonce'
+}
+
+@test "both modes name the loop script and rule out the review skill" {
+    setup_gate; mkrepo; stage_code
+    for mode in warn block; do
+        export REVIEW_GATE="$mode"
+        run gate 'git commit -m "add app"'
+        assert_output --partial 'code-review-loop` shell command clears this gate'
+        assert_output --partial '`/code-review`'
+    done
 }
 
 @test "block mode keeps the decision menu" {
@@ -871,7 +984,7 @@ EDITOR
     assert_denied
     assert_output --partial 'Classify the change'
     assert_output --partial 'AskUserQuestion'
-    refute_output --partial 'Warn mode, so this commit proceeds'
+    refute_output --partial 'Warn mode, so nothing here stops the commit'
 }
 
 # =========================================================================

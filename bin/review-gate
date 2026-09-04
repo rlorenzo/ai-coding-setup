@@ -252,10 +252,100 @@ TOKENS=()
 PARSE_FAILED=0
 HAS_SUBST=0
 
+# ---- heredoc bodies -------------------------------------------------------
+#
+# A heredoc body is data, not shell syntax, and the tokenizer below has no way
+# to know where one ends. An agent writing a multi-paragraph commit message
+# writes it as a heredoc, and a single apostrophe in the prose ("the gate's
+# message") then reads as an unbalanced quote: PARSE_FAILED, and the gate falls
+# back to its unparseable branch, which prints a parse warning and none of the
+# diff, the rubric, or the receipt. The commit most worth explaining gets the
+# least. Worse than the silence is what a body can say: `git commit -a`
+# quoted inside a message would otherwise be read as a staging flag on the
+# real commit.
+#
+# So the bodies come out before tokenizing. Only the delimiter lines and the
+# bodies are dropped; the command lines around them are untouched, which is
+# all the tokenizer needs.
+
+HD_QUEUE=()
+
+# Queue the heredoc delimiters opened on one line, in the order they open.
+# A manual scan rather than a regex: `<<<` is a herestring, and a regex for
+# `<<` matches its second and third characters happily.
+scan_heredoc_openers() { # scan_heredoc_openers <line>
+    local line="$1"
+    local n=${#line} i=0 c d w
+    while (( i < n )); do
+        if [[ "${line:i:1}" == "<" && "${line:i+1:1}" == "<" ]]; then
+            if [[ "${line:i+2:1}" == "<" ]]; then (( i += 3 )); continue; fi
+            (( i += 2 ))
+            d=0
+            [[ "${line:i:1}" == "-" ]] && { d=1; (( i++ )); }
+            while [[ "${line:i:1}" == " " || "${line:i:1}" == $'\t' ]]; do (( i++ )); done
+            w=""
+            while (( i < n )); do
+                c=${line:i:1}
+                case "$c" in
+                    ' '|$'\t'|';'|'&'|'|'|'<'|'>'|'('|')') break ;;
+                    # Quoting a delimiter only turns off expansion inside the
+                    # body; it is not part of the word that ends it.
+                    "'"|'"'|\\) ;;
+                    *) w+="$c" ;;
+                esac
+                (( i++ ))
+            done
+            [[ -n "$w" ]] && HD_QUEUE+=("$d:$w")
+            continue
+        fi
+        (( i++ ))
+    done
+}
+
+# A non-empty queue is the state: its head is the body being skipped, and the
+# rest are the heredocs the same line opened after it. Leaves the queue behind
+# for the caller, so a queue still non-empty at the end means an unterminated
+# heredoc swallowed the remaining lines.
+#
+# Sets STRIPPED rather than printing it: a command substitution here would fork
+# on every commit the agent makes, and the whole gate is built to stay under a
+# fork budget.
+STRIPPED=""
+strip_heredocs() { # strip_heredocs <command>
+    local s="$1" out="" line probe
+    HD_QUEUE=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if (( ${#HD_QUEUE[@]} )); then
+            probe="$line"
+            # `<<-` strips leading tabs from the delimiter line, and only tabs.
+            [[ "${HD_QUEUE[0]%%:*}" == 1 ]] && probe="${probe#"${probe%%[!$'\t']*}"}"
+            [[ "$probe" == "${HD_QUEUE[0]#*:}" ]] && HD_QUEUE=("${HD_QUEUE[@]:1}")
+            continue
+        fi
+        out+="$line"$'\n'
+        scan_heredoc_openers "$line"
+    done <<< "$s"
+    STRIPPED="$out"
+}
+
 tokenize() {
-    local s="$1"
+    local s="$1" orphaned=0
+
+    # Guarded, so the ordinary one-line commit pays a substring test and
+    # nothing more.
+    if [[ "$s" == *"<<"* ]]; then
+        strip_heredocs "$s"
+        s="$STRIPPED"
+        # A `<<` the scan read as an opener but that never closes: either a
+        # genuinely truncated heredoc, or a `<<` sitting in quoted prose
+        # (`printf 'usage: cmd <<file>>'`) that the scan cannot tell apart. Both
+        # swallow every line after it, which could be the commit itself, so this
+        # joins the unbalanced quote as a shape the gate could not resolve.
+        (( ${#HD_QUEUE[@]} )) && orphaned=1
+    fi
+
     local n=${#s} i=0 c q="" tok="" have=0
-    TOKENS=(); PARSE_FAILED=0; HAS_SUBST=0
+    TOKENS=(); PARSE_FAILED=$orphaned; HAS_SUBST=0
 
     while (( i < n )); do
         c=${s:i:1}
@@ -869,18 +959,21 @@ Lines changed by category:
 $COUNT_LINES
 Paths:
 ${PATH_LINES:-  (none)}
-Review receipt: $RECEIPT_STATUS"
+Review receipt: $RECEIPT_STATUS
 
-# The diagnosis above is worth printing in either mode. Below it the agent is
-# asked to decide something warn mode has already decided.
-if [[ "$MODE" != "block" ]]; then
-    REASON+="
+Only a clean run of the \`code-review-loop\` shell command clears this gate. It
+is a script on PATH, not a slash command: \`/code-review\`, a review subagent, and
+reading the diff yourself all leave the gate exactly where it is, because none
+of them write the receipt it checks."
 
-Warn mode, so this commit proceeds. Set REVIEW_GATE=block in
-~/.ai-coding-setup.conf to have the gate stop it instead."
-    miss "$REASON"
-fi
-
+# The name collision above is the whole reason this paragraph exists: an agent
+# told to "run code-review" reaches for the skill of that name, which reviews
+# but records nothing, and comes back to the same denial.
+#
+# The diagnosis and the rubric print in either mode. Warn mode cannot stop the
+# commit, but "proceed" is not the same instruction as "proceed on a trivial
+# change, review a non-trivial one", and the rubric is the only thing that
+# tells the two apart.
 REASON+="
 
 Classify the change, then take exactly one of these actions.
@@ -910,12 +1003,28 @@ NON-TRIVIAL, review first:
     filesystem or network path, regardless of size
   - new files containing logic
   - dependency changes (defer to the dependency-review skill)
-  - anything you are unsure about; unsure is a non-trivial answer
+  - anything you are unsure about; unsure is a non-trivial answer"
+
+# Warn mode cannot deny, so it asks nothing and offers no nonce: the menu below
+# would be a question whose answer has already been given.
+if [[ "$MODE" != "block" ]]; then
+    REASON+="
+
+  Run \`code-review-loop\` and commit once it comes back clean.
+
+Warn mode, so nothing here stops the commit. If you commit a non-trivial change
+without that review, say so plainly in your reply rather than letting it pass in
+silence. Set REVIEW_GATE=block in ~/.ai-coding-setup.conf to have the gate
+enforce this instead of asking."
+    miss "$REASON"
+fi
+
+REASON+="
 
   Ask the user with AskUserQuestion, offering:
-    1. Run \`code-review-loop\` now, then commit if the review comes back clean.
-       A clean run records a receipt, so the retried commit passes with no
-       further prompting.
+    1. Run the \`code-review-loop\` shell command now, then commit if the review
+       comes back clean. A clean run records a receipt, so the retried commit
+       passes with no further prompting.
     2. Skip the review and commit anyway$([[ -n "$NONCE" ]] && printf ' (uses the nonce above)')."
 
 REASON+="
