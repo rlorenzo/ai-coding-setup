@@ -234,6 +234,8 @@ A hook that stops a coding agent from committing code nobody reviewed.
 
 Every harness has a pre-tool event that can deny a tool call. `review-gate` sits on that event, watches for a `git commit`, and answers one question in well under a second: does this staged change already have a clean review? If it does, or if the commit is not really a code change at all, the agent never sees the gate. If it does not, the gate denies the commit and hands the agent the staged diff, per-category line counts, and a rubric, and the agent either judges the change trivial and says so out loud, or asks you what to do.
 
+Only `code-review-loop` clears the gate: it is the one thing that writes the review receipt. The `/code-review` slash command this repo also installs reviews the same staged diff and writes `agent-code-review.md`, but records nothing the gate can read, so the deny message names the script and rules the skill out by name.
+
 The gate never runs `code-review-loop` itself. That takes minutes and is designed to hand back to a human at the end; the gate is pure git plumbing, and the loop runs afterward as an ordinary foreground command if you pick that option.
 
 **What passes without a word:**
@@ -251,7 +253,7 @@ The gate never runs `code-review-loop` itself. That takes minutes and is designe
 
 | Mode | Behavior |
 | --- | --- |
-| `warn` | Default. Prints the reason and lets the commit through. |
+| `warn` | Default. Prints the reason and the trivial/non-trivial rubric, asks the agent to run `code-review-loop` on a non-trivial change or to say out loud that it skipped it, and lets the commit through either way. Nothing enforces it. |
 | `block` | Denies the commit and hands the agent the reason. |
 | `off` | Disabled. |
 
