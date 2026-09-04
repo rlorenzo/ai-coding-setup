@@ -27,6 +27,52 @@ repos:
         pass_filenames: false
         files: ^(\.claude/commands/|\.codex/|\.copilot/|\.antigravity/skills/|\.kimi-code/skills/|prompts/|tools/generate)
         stages: [pre-commit]
+      # SkillSpector is NVIDIA's security scanner for agent skills: prompt
+      # injection, data exfiltration, tool misuse, supply-chain risk. This repo
+      # publishes skills that other people install into their own agents, which
+      # is exactly the trust boundary it was written for, so the scan runs
+      # before the skills leave here rather than after someone installs them.
+      #
+      # Pinned to the commit behind v2.11.0. The project is not on PyPI, so the
+      # dependency is a git URL, and a tag can be moved where a SHA cannot.
+      #
+      # `--no-llm` keeps it to the static analyzers. The semantic ones want an
+      # API key that neither a contributor's laptop nor CI has, and the tool
+      # skips them with a warning rather than failing.
+      #
+      # Exit code is the gate: 0 for SAFE or CAUTION, 1 for DO_NOT_INSTALL
+      # (risk score above 50), 2 for an error. So a commit is blocked only by a
+      # genuinely bad score, and the CAUTION findings print without stopping
+      # anyone. Today all seven skills score 25 or below.
+      #
+      # Only the Codex copies are scanned. `tools/generate` renders every
+      # harness from the canonical `.claude/commands/` sources and the hook
+      # above proves they are in sync, so the bodies are byte-identical and
+      # scanning four copies would buy nothing but three more runs.
+      - id: skillspector-skills
+        name: SkillSpector scan of the published skills
+        entry: skillspector
+        args: ["scan", ".codex/skills", "--recursive", "--no-llm"]
+        language: python
+        additional_dependencies:
+          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
+        pass_filenames: false
+        files: ^(\.claude/commands/|prompts/|\.codex/skills/|tools/generate)
+        stages: [pre-commit]
+
+      # Not generated from prompts/ and not a SKILL.md directory, so it is
+      # outside the recursive scan above and needs naming on its own.
+      - id: skillspector-agent
+        name: SkillSpector scan of the Explore agent
+        entry: skillspector
+        args: ["scan", ".claude/agents/Explore.md", "--no-llm"]
+        language: python
+        additional_dependencies:
+          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
+        pass_filenames: false
+        files: ^\.claude/agents/
+        stages: [pre-commit]
+
       - id: bats-unit-tests
         name: BATS unit tests
         entry: test/run

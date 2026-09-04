@@ -521,7 +521,9 @@ Each installed agent is tested as both editor (can it modify a file?) and review
 
 ### Pre-commit hooks (optional)
 
-This repo uses [pre-commit](https://pre-commit.com/) to run linters locally before each commit. Install it once and you'll get automatic checks for shell scripts (shellcheck), markdown (markdownlint), and TOML syntax.
+This repo uses [pre-commit](https://pre-commit.com/) to run linters locally before each commit. Install it once and you'll get automatic checks for shell scripts (shellcheck), markdown (markdownlint), TOML syntax, the BATS suite, and a SkillSpector security scan of the skills this repo publishes.
+
+Because of that last one the hook environment needs Python 3.12, 3.13, or 3.14. If yours is outside that range, pre-commit fails while building the hook's venv; `SKIP=skillspector-skills,skillspector-agent git commit ...` gets you past it, and CI runs the scan either way.
 
 ```bash
 pip install pre-commit   # or: brew install pre-commit (macOS)
@@ -535,6 +537,25 @@ pre-commit run --all-files
 ```
 
 If you skip the local setup, the same checks run in CI on your pull request.
+
+### Skill security scanning
+
+The skills in this repo are meant to be installed into other people's agents, where they run with whatever trust that agent has. [SkillSpector](https://github.com/NVIDIA/skillspector), NVIDIA's security scanner for agent skills, checks them for prompt injection, hidden instructions, data exfiltration, tool misuse, and supply-chain risk before they leave here.
+
+Two pre-commit hooks run it, and the `Lint` workflow runs every pre-commit hook over every file, so the scan gates pull requests too. There is no separate security workflow.
+
+- It runs with `--no-llm`, the static analyzers only. The semantic ones want an API key that neither a laptop nor CI has, and SkillSpector skips them with a warning rather than failing.
+- The gate is the exit code: `0` for `SAFE` or `CAUTION`, `1` for `DO_NOT_INSTALL` (a risk score above 50), `2` for an error. Only a genuinely bad score blocks a commit. The `CAUTION` findings print and let you through, which is the intent: `git-history-cleanup` scores 25 for the `git reset --hard` and `--force-with-lease` in its own instructions, and a skill about rewriting history is going to mention rewriting history.
+- The dependency is pinned to the commit behind `v2.11.0`. SkillSpector is not on PyPI, so it installs from a git URL, and a tag can be moved where a commit cannot.
+- Only the Codex copies of the skills are scanned. `tools/generate` renders every harness from the canonical `.claude/commands/` sources and the `generated-files-in-sync` hook proves they match, so the bodies are byte-identical and scanning four copies would buy three more runs and nothing else.
+- `.claude/agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
+
+To run it by hand:
+
+```bash
+uv tool install git+https://github.com/NVIDIA/skillspector.git@v2.11.0
+skillspector scan .codex/skills --recursive --no-llm
+```
 
 ## License
 

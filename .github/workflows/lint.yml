@@ -15,9 +15,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      # Pinned rather than "3.x": pre-commit builds the SkillSpector hook's own
+      # venv, and that package requires >=3.12,<3.15. A floating latest would
+      # install fine until the day CPython ships a version past that range.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
       - uses: pre-commit/action@v3.0.1
 
   # The scripts here are Bash, but they run under Git Bash on Windows too, and
