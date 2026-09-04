@@ -562,7 +562,7 @@ install_commands() {
 # Status line that mirrors the real plan quota to ~/.claude/rate_limits.json so
 # skills (efficient-orchestration) can read it. jq is already a setup dependency.
 # shellcheck disable=SC2016
-CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
+CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json.tmp" && mv "$HOME/.claude/rate_limits.json.tmp" "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
 
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
@@ -621,7 +621,7 @@ configure_claude_settings() {
     elif ! echo "$settings" | jq -r '.statusLine.command // ""' | grep -q 'rate_limits.json'; then
         echo ""
         print_info "You already have a custom statusLine. To let skills read your real plan quota, prepend this to its command:"
-        echo -e "  ${DIM}input=\$(cat); printf '%s' \"\$input\" | jq -c '.rate_limits // {}' > \"\$HOME/.claude/rate_limits.json\"; printf '%s' \"\$input\" | <your existing command>${NC}"
+        echo -e "  ${DIM}input=\$(cat); printf '%s' \"\$input\" | jq -c '.rate_limits // {}' > \"\$HOME/.claude/rate_limits.json.tmp\" && mv \"\$HOME/.claude/rate_limits.json.tmp\" \"\$HOME/.claude/rate_limits.json\"; printf '%s' \"\$input\" | <your existing command>${NC}"
     fi
     if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* || "$(uname -s)" == CYGWIN* ]]; then
         if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_USE_POWERSHELL_TOOL' &>/dev/null; then

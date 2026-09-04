@@ -553,7 +553,7 @@ Two pre-commit hooks run it, and the `Lint` workflow runs every pre-commit hook 
 To run it by hand:
 
 ```bash
-uv tool install git+https://github.com/NVIDIA/skillspector.git@v2.11.0
+uv tool install git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9  # v2.11.0
 skillspector scan .codex/skills --recursive --no-llm
 ```
 
