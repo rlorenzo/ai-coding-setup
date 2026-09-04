@@ -57,7 +57,10 @@ repos:
         additional_dependencies:
           - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
         pass_filenames: false
-        files: ^(\.claude/commands/|prompts/|\.codex/skills/|tools/generate)
+        # Only the scanned copies. The sync hook above will not let a change to
+        # the sources land without the regenerated `.codex/skills/` beside it,
+        # so triggering on the sources too would only rescan the same bytes.
+        files: ^\.codex/skills/
         stages: [pre-commit]
 
       # Not generated from prompts/ and not a SKILL.md directory, so it is

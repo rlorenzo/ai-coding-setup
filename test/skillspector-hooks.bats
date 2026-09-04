@@ -11,9 +11,11 @@ load test_helper
         # Without nullglob an unmatched glob loops once on its own literal.
         [[ -e "$agent" ]] || continue
         rel="${agent#"$PROJECT_ROOT/"}"
-        # The path, not the path in quotes: YAML lets the scalar be single
-        # quoted or bare, and either still names the file to scan.
-        grep -qF "$rel" "$PROJECT_ROOT/.pre-commit-config.yaml" ||
+        # Only the args: lines count. A path in a comment names nothing to
+        # scan, and the quotes are optional: YAML lets the scalar be single
+        # quoted or bare, and either still names the file.
+        grep -E '^[[:space:]]*args:' "$PROJECT_ROOT/.pre-commit-config.yaml" |
+            grep -qF "$rel" ||
             fail "no skillspector hook scans $rel"
     done
 }
