@@ -7,9 +7,11 @@
 load test_helper
 
 @test "every .claude/agents file is named by a skillspector hook" {
-    for agent in "$PROJECT_ROOT"/.claude/agents/*.md; do
+    # Every file, not just *.md: the hook triggers on the whole directory,
+    # so a non-Markdown agent file would need naming too.
+    for agent in "$PROJECT_ROOT"/.claude/agents/*; do
         # Without nullglob an unmatched glob loops once on its own literal.
-        [[ -e "$agent" ]] || continue
+        [[ -f "$agent" ]] || continue
         rel="${agent#"$PROJECT_ROOT/"}"
         # Only the args: lines count. A path in a comment names nothing to
         # scan, and the quotes are optional: YAML lets the scalar be single

@@ -63,8 +63,9 @@ repos:
         files: ^\.codex/skills/
         stages: [pre-commit]
 
-      # Not generated from prompts/ and not a SKILL.md directory, so it is
-      # outside the recursive scan above and needs naming on its own.
+      # Not one of the copies generated from `.claude/commands/` and not a
+      # SKILL.md directory, so it falls outside the recursive scan above and
+      # needs naming on its own.
       - id: skillspector-agent
         name: SkillSpector scan of the Explore agent
         entry: skillspector
