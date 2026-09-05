@@ -117,3 +117,27 @@ attribution() {
     assert_success
     assert_equal "$(jq -r '.env.EXISTING' "$HOME/.claude/settings.json")" "1"
 }
+
+# ---- statusLine -----------------------------------------------------------
+
+@test "statusline: set when absent and the command mirrors rate_limits" {
+    seed_settings '{}'
+    run_configure y
+    assert_success
+    assert_output --partial "mirrors the quota to ~/.claude/rate_limits.json"
+    assert_equal "$(jq -r '.statusLine.type' "$HOME/.claude/settings.json")" "command"
+    # Feed the command a sample payload and check both the file and the line.
+    local cmd; cmd=$(jq -r '.statusLine.command' "$HOME/.claude/settings.json")
+    run sh -c "$cmd" <<< '{"model":{"display_name":"Opus"},"context_window":{"used_percentage":12.6},"rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":1},"seven_day":{"used_percentage":41.2,"resets_at":2}}}'
+    assert_success
+    assert_output "[Opus] ctx 12% · 5h 23% · 7d 41%"
+    assert_equal "$(jq -c '.five_hour.used_percentage' "$HOME/.claude/rate_limits.json")" "23.5"
+}
+
+@test "statusline: a custom statusLine is never overwritten, hint printed" {
+    seed_settings '{"statusLine":{"type":"command","command":"echo mine"}}'
+    run_configure y
+    assert_success
+    assert_output --partial "already have a custom statusLine"
+    assert_equal "$(jq -r '.statusLine.command' "$HOME/.claude/settings.json")" "echo mine"
+}
