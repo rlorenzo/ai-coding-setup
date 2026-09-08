@@ -256,6 +256,17 @@ add_mcp_server() {
     esac
 }
 
+# Translate a permission pattern into the tool's own grant syntax.
+# Claude uses "mcp__<server>__*"; Antigravity only parses "mcp(<server>/*)" and
+# silently drops anything else from settings.json on its next launch.
+mcp_permission_for() {
+    local tool="$1" name="$2" permission="$3"
+    case "$tool" in
+        antigravity) echo "mcp(${name}/*)" ;;
+        *)           echo "$permission" ;;
+    esac
+}
+
 # Check whether an MCP auto-approve permission exists for a given tool.
 # Returns success for tools without a JSON permission allow-list we can edit
 # safely: codex, and kimi (whose rules live in config.toml as a
@@ -354,8 +365,10 @@ configure_mcp() {
         parse_mcp_server "$server_def"
         [[ -z "$_mcp_permission" ]] && continue
         is_mcp_configured "$tool" "$_mcp_name" || continue
-        is_mcp_permitted "$tool" "$_mcp_permission" && continue
-        missing_perms+=("$_mcp_permission")
+        local perm
+        perm=$(mcp_permission_for "$tool" "$_mcp_name" "$_mcp_permission")
+        is_mcp_permitted "$tool" "$perm" && continue
+        missing_perms+=("$perm")
     done
 
     if [[ ${#missing_perms[@]} -gt 0 ]]; then
