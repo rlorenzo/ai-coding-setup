@@ -4,7 +4,7 @@
 # Automated code review feedback loop.
 #
 # Orchestrates a multi-step review cycle:
-#   1. Editor agent runs code-refinement (lint, KISS/DRY/YAGNI, test coverage)
+#   1. Editor agent runs code-refinement (four review angles, lint, test coverage)
 #   2. Stage changes
 #   3. Reviewer agent reviews staged changes -> agent-code-review.md
 #   4. If issues found: editor responds, stages fixes, reviewer re-reviews
@@ -14,6 +14,14 @@
 # Agent roles are configurable via ~/.ai-coding-setup.conf and CLI flags.
 # ---------------------------------------------------------------------------
 set -euo pipefail
+
+# ---- read the whole script before running any of it -----------------------
+# Bash reads a script incrementally by byte offset, and this loop hands editor
+# agents a working tree that holds this very file.  A brace group forces a full
+# parse up front, so a mid-run rewrite cannot derail execution.  The `exit`
+# before the closing brace is load-bearing: without it bash resumes reading
+# after the group, at the stale offset.
+{
 
 # ---- load shared library --------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -81,6 +89,10 @@ REVIEWER_INITIAL_PROMPT="$PROMPTS_DIR/code-review.md"
 REVIEWER_FOLLOWUP_PROMPT="$PROMPTS_DIR/code-review-followup.md"
 
 EDITOR_TOOLS="Edit,Read,Write,Bash,Grep,Glob"
+# Only the refinement step fans out, so only it is granted a subagent tool.
+# Both names are passed because Claude Code renamed Task to Agent; an allowlist
+# entry for a tool that does not exist is inert.
+REFINEMENT_TOOLS="$EDITOR_TOOLS,Task,Agent"
 REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
 
 # ---- helpers -------------------------------------------------------------
@@ -167,6 +179,8 @@ fi
 # ---- temp directory with cleanup -----------------------------------------
 setup_temp "code-review-loop"
 
+# shellcheck disable=SC2329  # the trap below invokes it; shellcheck stops
+# tracing trap handlers once they sit inside the brace group.
 cleanup_run() {
     cleanup_temp
     review_gate_lock_release
@@ -241,7 +255,7 @@ iteration_log=""
 
 # ---- Step 1: Code Refinement --------------------------------------------
 if [[ "$SKIP_REFINEMENT" == false ]]; then
-    write_step "1" "$EDITOR_AGENT: Code Refinement (lint, KISS/DRY/YAGNI, tests)"
+    write_step "1" "$EDITOR_AGENT: Code Refinement (four review angles, lint, tests)"
     write_status "This may take several minutes..." "$DIM"
 
     refinement_prompt=$(read_prompt_file "$EDITOR_REFINEMENT_PROMPT")
@@ -251,7 +265,7 @@ if [[ "$SKIP_REFINEMENT" == false ]]; then
 
     local_exit=0
     AGENT_LOG="$RUN_LOG_DIR/1-refinement.$EDITOR_AGENT.log" \
-        run_agent "$EDITOR_AGENT" "$refinement_prompt" "$EDITOR_TOOLS" || local_exit=$?
+        run_agent "$EDITOR_AGENT" "$refinement_prompt" "$REFINEMENT_TOOLS" || local_exit=$?
     cleanup_agent_artifacts "$EDITOR_AGENT" "$pre_snapshot" "editor"
 
     if [[ $local_exit -ne 0 ]]; then
@@ -536,3 +550,6 @@ fi
 echo -e " Logs     : $RUN_LOG_DIR"
 echo ""
 echo -e "${CYAN}Waiting for manual review.${NC}"
+
+exit 0
+}
