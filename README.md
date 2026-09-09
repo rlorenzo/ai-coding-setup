@@ -91,7 +91,7 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 
 ### /code-refinement
 
-Review staged files for code quality (KISS, DRY, YAGNI, Clean Code), fix linting issues, and check test coverage.
+Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. Fans the angles out to parallel subagents when the agent has a subagent tool.
 
 **Usage:**
 
@@ -171,7 +171,7 @@ Both scripts are installed onto your `PATH` by `./setup` and rely on the prompts
 
 Runs a full review cycle over your **staged changes**:
 
-1. **Refinement**: editor agent runs the `code-refinement` prompt (lint, KISS/DRY/YAGNI, test coverage). Skip with `-s`.
+1. **Refinement**: editor agent runs the `code-refinement` prompt (four review angles, lint, test coverage). Skip with `-s`.
 2. **Stage**: any fixes from refinement are staged.
 3. **Initial review**: reviewer agent writes findings to `agent-code-review.md`.
 4. **Fix → re-review loop**: editor responds to findings, reviewer re-reviews, repeat until clean or max iterations.
