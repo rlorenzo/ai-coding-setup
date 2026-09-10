@@ -177,7 +177,9 @@ Runs a full review cycle over your **staged changes**:
 4. **Fix → re-review loop**: editor responds to findings, reviewer re-reviews, repeat until clean or max iterations.
 5. **Summary**: editor writes a narrative summary to `agent-review-summary.md`.
 
-A pre-review snapshot of your staged work is saved to the git stash so you can restore the original if the loop mangles something. Partially staged files are rejected up front, so fully stage or unstage before running.
+A pre-review snapshot of your staged work is saved to the git stash so you can restore the original if the loop mangles something. Files in the review scope that also have unstaged changes are rejected up front, so fully stage or unstage before running.
+
+Pass `--branch` to widen the scope to the whole branch: the diff under review becomes every commit since the branch left the default branch (its merge-base) plus whatever is staged. The default branch is read from `origin/HEAD`, falling back to `main` then `master`; pass `--branch REF` to name another. Fixes from the loop are still staged, never committed, so you can fold them into the branch however you like.
 
 **Usage:**
 
@@ -185,6 +187,8 @@ A pre-review snapshot of your staged work is saved to the git stash so you can r
 code-review-loop                                # default agents, 5 iterations
 code-review-loop -m 3                           # cap at 3 review cycles
 code-review-loop -s                             # skip the refinement step
+code-review-loop --branch                       # review the branch's commits plus staged changes
+code-review-loop --branch develop               # same, against a named base branch
 code-review-loop --editor claude --reviewer codex
 ```
 
