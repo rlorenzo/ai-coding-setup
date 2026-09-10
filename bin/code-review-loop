@@ -35,6 +35,8 @@ load_config
 
 MAX_ITERATIONS=5
 SKIP_REFINEMENT=false
+BRANCH_MODE=false
+BASE_REF=""
 
 # Track whether CLI explicitly set agents (to preserve override over config)
 _CLI_EDITOR="" _CLI_REVIEWER=""
@@ -46,7 +48,14 @@ Usage: code-review-loop [OPTIONS]
 
 Orchestrates a code review feedback loop between two AI agents.
 
+By default the change under review is the index (staged changes). With
+--branch, it is every commit on the current branch since it left REF, plus
+the index. Fixes are staged either way, never committed.
+
 Options:
+  -b, --branch [REF]       Review the branch's commits since REF plus staged
+                           changes, instead of staged changes alone. REF
+                           defaults to origin/HEAD, then main, then master.
   -m, --max-iterations N   Maximum review-fix-review cycles (default: 5)
   -s, --skip-refinement    Skip the initial code-refinement step
   -e, --editor AGENT       Agent for editing/implementation (default: claude)
@@ -63,6 +72,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -m|--max-iterations) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; MAX_ITERATIONS="$2"; shift 2 ;;
         -s|--skip-refinement) SKIP_REFINEMENT=true; shift ;;
+        -b|--branch)
+            # Optional value: a following arg that is not a flag is the ref.
+            BRANCH_MODE=true
+            if [[ $# -ge 2 && "$2" != -* ]]; then BASE_REF="$2"; shift 2
+            else shift; fi ;;
         -e|--editor)   [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_EDITOR="$2"; shift 2 ;;
         -r|--reviewer) [[ $# -ge 2 ]] || { echo -e "${RED}ERROR: $1 requires a value${NC}"; usage; }; _CLI_REVIEWER="$2"; shift 2 ;;
         -h|--help) usage ;;
@@ -77,6 +91,51 @@ done
 validate_agent_name "$EDITOR_AGENT" "--editor"
 validate_agent_name "$REVIEWER_AGENT" "--reviewer"
 validate_positive_int "$MAX_ITERATIONS" "--max-iterations"
+
+# ---- review scope --------------------------------------------------------
+# scope_diff is the one diff every step and agent reads.  Without --branch it
+# is a plain `git diff --staged`, which also works on an unborn HEAD; with
+# --branch, DIFF_BASE holds the merge-base so the branch's own commits join the
+# scope.  Resolved to a SHA once here, so a ref moving mid-run cannot shift the
+# scope under the agents.  Staging further down stays on the bare index diff on
+# purpose: it asks about the index, which is a different question from what is
+# under review.
+default_base_ref() {
+    local ref
+    ref=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) && { echo "$ref"; return; }
+    for ref in main master; do
+        git rev-parse --verify -q "$ref" >/dev/null 2>&1 && { echo "$ref"; return; }
+    done
+    return 1
+}
+
+DIFF_BASE=""
+SCOPE_NOTE=""
+
+scope_diff() {
+    if [[ -n "$DIFF_BASE" ]]; then
+        git diff --staged "$DIFF_BASE" "$@"
+    else
+        git diff --staged "$@"
+    fi
+}
+
+if [[ "$BRANCH_MODE" == true ]]; then
+    [[ -n "$BASE_REF" ]] || BASE_REF=$(default_base_ref) || {
+        echo -e "${RED}ERROR: could not detect the default branch; pass --branch REF${NC}"
+        exit 1
+    }
+    DIFF_BASE=$(git merge-base "$BASE_REF" HEAD 2>/dev/null) || {
+        echo -e "${RED}ERROR: no merge-base between '$BASE_REF' and HEAD${NC}"
+        exit 1
+    }
+    # Named as a command to run, not as a phrase to find and replace: the
+    # prompts word the diff differently from each other, and the refinement
+    # prompt fans out, so the note has to survive being handed to a subagent.
+    SCOPE_NOTE="
+
+SCOPE: the changes under review are the output of \`git diff --staged $DIFF_BASE\`: every commit on this branch since it left $BASE_REF, plus the index. Run that command instead of any other diff command these instructions name, and pass it on to every subagent you launch."
+fi
 
 # ---- paths ---------------------------------------------------------------
 PROJECT_ROOT="$(pwd)"
@@ -98,8 +157,10 @@ REVIEWER_TOOLS="Read,Write,Bash,Grep,Glob"
 # ---- helpers -------------------------------------------------------------
 
 stage_review_changes() {
-    # Re-stage files that are in the review scope (partially staged files are
-    # rejected at startup, so git add here is safe)
+    # Re-stage files already in the index, so an agent's edits to them are
+    # picked up (partially staged files are rejected at startup, so git add
+    # here is safe).  Deliberately the index, not scope_diff: under --branch
+    # that would git add every file the branch's commits touched.
     local current_staged
     current_staged=$(git diff --staged --name-only 2>/dev/null) || true
     if [[ -n "$current_staged" ]]; then
@@ -159,16 +220,21 @@ validate_prompts "${_required_prompts[@]}"
 
 # ---- main ----------------------------------------------------------------
 
-# Detect partially staged files (some hunks staged, others not); these would
-# cause the staging logic to either miss review fixes or pull in unrelated hunks.
-partially_staged=$(comm -12 \
-    <(git diff --staged --name-only 2>/dev/null | sort) \
+# Detect files in the review scope that also carry unstaged changes: a
+# partially staged file, or under --branch a committed branch file the developer
+# has since edited.  Either way stage_review_changes would leave the agents'
+# fixes to that file out of the index, so later reviews never see them.
+# The index list joins the scope list because stage_review_changes git adds
+# every staged path, including ones scope_diff omits (under --branch, a staged
+# restoration back to the merge-base content shows no scope diff at all).
+overlapping=$(comm -12 \
+    <({ scope_diff --name-only 2>/dev/null; git diff --staged --name-only 2>/dev/null; } | sort -u) \
     <(git diff --name-only 2>/dev/null | sort)) || true
-if [[ -n "$partially_staged" ]]; then
-    echo -e "${RED}ERROR: Partially staged files detected:${NC}"
+if [[ -n "$overlapping" ]]; then
+    echo -e "${RED}ERROR: files in the review scope have unstaged changes:${NC}"
     while IFS= read -r f; do
         echo "  $f"
-    done <<< "$partially_staged"
+    done <<< "$overlapping"
     echo ""
     echo "Fully stage or unstage these files before running the review loop:"
     echo "  git add <file>        # stage all changes"
@@ -217,15 +283,24 @@ echo " Max iterations : $MAX_ITERATIONS"
 echo " Skip refinement: $SKIP_REFINEMENT"
 echo " Editor         : $EDITOR_AGENT"
 echo " Reviewer       : $REVIEWER_AGENT"
+if [[ -n "$BASE_REF" ]]; then
+    echo " Scope          : branch since $BASE_REF (${DIFF_BASE:0:7}) + staged"
+else
+    echo " Scope          : staged changes"
+fi
 echo " Logs           : $RUN_LOG_DIR"
 [[ -n "${pruned:-}" ]] && echo " Pruned         : $pruned run log(s) older than a day"
 
 start_time=$(date +%s)
 
-# Capture initial state for the summary
-initial_diff=$(git diff --staged --stat 2>&1) || true
-initial_diff_full=$(git diff --staged 2>&1) || true
-initial_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
+# Capture initial state for the summary.  The full patch goes straight to the
+# file the summary agent is pointed at rather than through a shell variable:
+# under --branch that is the whole branch, too big to carry across the run.
+initial_diff_file="$TMPDIR_REVIEW/review-initial-diff.patch"
+final_diff_file="$TMPDIR_REVIEW/review-final-diff.patch"
+initial_diff=$(scope_diff --stat 2>&1) || true
+scope_diff > "$initial_diff_file" 2>&1 || true
+initial_added_files=$(scope_diff --name-only --diff-filter=A 2>/dev/null | sort) || true
 
 # Baseline unstaged tracked files: only changes to files NOT in this list
 # should be staged during the loop (they come from the review agents).
@@ -258,7 +333,7 @@ if [[ "$SKIP_REFINEMENT" == false ]]; then
     write_step "1" "$EDITOR_AGENT: Code Refinement (four review angles, lint, tests)"
     write_status "This may take several minutes..." "$DIM"
 
-    refinement_prompt=$(read_prompt_file "$EDITOR_REFINEMENT_PROMPT")
+    refinement_prompt=$(read_prompt_file "$EDITOR_REFINEMENT_PROMPT")$SCOPE_NOTE
 
     pre_snapshot="$TMPDIR_REVIEW/pre-refinement.txt"
     snapshot_untracked > "$pre_snapshot"
@@ -286,11 +361,11 @@ fi
 # ---- Step 2: Stage changes ----------------------------------------------
 write_step "2" "Staging changed files"
 stage_review_changes
-staged_count=$(git diff --staged --name-only | wc -l | tr -d '[:space:]')
-write_status "$staged_count files staged"
+staged_count=$(scope_diff --name-only | wc -l | tr -d '[:space:]')
+write_status "$staged_count files in review scope"
 
 if [[ "$staged_count" -eq 0 ]]; then
-    write_status "No staged changes to review. Exiting." "$YELLOW"
+    write_status "No changes to review. Exiting." "$YELLOW"
     exit 0
 fi
 
@@ -303,7 +378,7 @@ review_prompt=$(read_prompt_file "$REVIEWER_INITIAL_PROMPT")
 review_task="$review_prompt
 
 This is review iteration 1.
-IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts."
+IMPORTANT: You MUST always create the file agent-code-review.md with your findings, even if there are no issues. If clean, write the report with \"Verdict: good to go\" and zero issue counts.$SCOPE_NOTE"
 
 pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
 snapshot_untracked > "$pre_snapshot"
@@ -354,6 +429,8 @@ while [[ $iteration -lt $MAX_ITERATIONS ]]; do
     write_step "4.$iteration" "$EDITOR_AGENT: Responding to Code Review"
     write_status "This may take several minutes..." "$DIM"
 
+    # No $SCOPE_NOTE here: this step works from agent-code-review.md, which
+    # already cites file and line, rather than from the diff.
     review_response_prompt=$(read_prompt_file "$EDITOR_RESPONSE_PROMPT")
     context_prompt="$review_response_prompt
 
@@ -388,7 +465,7 @@ Read it, evaluate each finding, implement valid fixes, and respond inline per th
     followup_task="$followup_prompt
 
 This is review iteration $((iteration + 1)).
-IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings."
+IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings.$SCOPE_NOTE"
 
     pre_snapshot="$TMPDIR_REVIEW/pre-review-cycle-$iteration.txt"
     snapshot_untracked > "$pre_snapshot"
@@ -419,9 +496,9 @@ elapsed_display=$(format_elapsed "$start_time")
 is_clean=false
 test_review_clean && is_clean=true
 
-final_diff=$(git diff --staged --stat 2>&1) || true
-final_diff_full=$(git diff --staged 2>&1) || true
-final_added_files=$(git diff --staged --name-only --diff-filter=A 2>/dev/null | sort) || true
+final_diff=$(scope_diff --stat 2>&1) || true
+scope_diff > "$final_diff_file" 2>&1 || true
+final_added_files=$(scope_diff --name-only --diff-filter=A 2>/dev/null | sort) || true
 review_created_files=$(comm -13 <(printf '%s\n' "$initial_added_files") <(printf '%s\n' "$final_added_files")) || true
 
 # Read the final review document
@@ -430,11 +507,6 @@ if [[ -f "$REVIEW_FILE" ]]; then
     final_review=$(<"$REVIEW_FILE")
 fi
 
-# Write full diffs to temp files for the summary agent to reference
-initial_diff_file="$TMPDIR_REVIEW/review-initial-diff.patch"
-final_diff_file="$TMPDIR_REVIEW/review-final-diff.patch"
-printf '%s' "$initial_diff_full" > "$initial_diff_file"
-printf '%s' "$final_diff_full" > "$final_diff_file"
 write_status "Full diffs saved to temp files for summary agent" "$DIM"
 
 if $is_clean; then
@@ -461,8 +533,8 @@ This was an automated code review loop that ran $iteration cycle(s) in $elapsed_
 Final status: $final_status
 Editor agent: $EDITOR_AGENT | Reviewer agent: $REVIEWER_AGENT
 
-## Initial Staged Diff (before review loop)
-This is what was staged BEFORE the review loop started, the original author's work:
+## Initial Diff (before review loop)
+This is the change under review BEFORE the review loop started, the original author's work:
 $initial_diff
 Full diff available at: $initial_diff_file
 
@@ -472,7 +544,7 @@ $iteration_log
 ## Final Review Document
 $final_review
 
-## Final Staged Diff (after review loop)
+## Final Diff (after review loop)
 $final_diff
 Full diff available at: $final_diff_file
 
@@ -529,6 +601,7 @@ echo " Cycles   : $iteration / $MAX_ITERATIONS"
 echo " Duration : $elapsed_display"
 echo " Editor   : $EDITOR_AGENT"
 echo " Reviewer : $REVIEWER_AGENT"
+[[ -n "$BASE_REF" ]] && echo " Base     : $BASE_REF"
 echo ""
 [[ -f "$REVIEW_FILE" ]] && echo -e " Review   : agent-code-review.md"
 if [[ -f "$SUMMARY_FILE" ]]; then
