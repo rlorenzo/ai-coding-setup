@@ -577,6 +577,26 @@ install_commands() {
 # shellcheck disable=SC2016
 CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json.tmp" && mv "$HOME/.claude/rate_limits.json.tmp" "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
 
+# Reasoning effort per model. Claude Code reads these from `modelSettings`, so
+# a model keeps its effort level across sessions without an /effort toggle.
+#
+# Keyed by alias, not by a dated model ID: Claude Code resolves the key through
+# the same alias table as `/model`, so "opus" tracks whichever Opus is current
+# and the preference survives the next model release. A dated key like
+# `claude-opus-5` would silently stop applying the day Opus 6 ships.
+CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high"}}'
+
+# The defaults above whose model has no effortLevel in settings.json yet. An
+# existing key counts as that model when it contains the alias, so a hand-written
+# `claude-opus-5`, `opus[1m]` or a Bedrock spelling all mean "opus is already
+# set" and are left alone rather than gaining a second key beside them.
+# shellcheck disable=SC2016
+CLAUDE_MODEL_SETTINGS_MISSING='(
+    [(.modelSettings // {}) | to_entries[]
+        | select(.value.effortLevel != null) | .key | ascii_downcase] as $set
+    | $d | with_entries(select(.key as $k | ($set | any(contains($k))) | not))
+)'
+
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
 
@@ -623,6 +643,10 @@ configure_claude_settings() {
     # different style is never overridden.
     if ! echo "$settings" | jq -e '.outputStyle' &>/dev/null; then
         feature_changes+=("outputstyle")
+    fi
+    if ! echo "$settings" | jq -e --argjson d "$CLAUDE_MODEL_SETTINGS" \
+        "$CLAUDE_MODEL_SETTINGS_MISSING"' | length == 0' &>/dev/null; then
+        feature_changes+=("modelsettings")
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
@@ -672,6 +696,7 @@ configure_claude_settings() {
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
+                modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium, Opus high)" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
@@ -686,6 +711,8 @@ configure_claude_settings() {
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
+                    modelsettings) updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
+                                       "$CLAUDE_MODEL_SETTINGS_MISSING"' as $add | .modelSettings = ((.modelSettings // {}) * $add)') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;

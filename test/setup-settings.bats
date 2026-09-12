@@ -141,3 +141,58 @@ attribution() {
     assert_output --partial "already have a custom statusLine"
     assert_equal "$(jq -r '.statusLine.command' "$HOME/.claude/settings.json")" "echo mine"
 }
+
+# ---- modelSettings --------------------------------------------------------
+
+@test "modelsettings: written when absent, keyed by alias" {
+    seed_settings '{}'
+    run_configure y
+    assert_success
+    assert_output --partial "default reasoning effort per model"
+    assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" \
+        '{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high"}}'
+}
+
+@test "modelsettings: an existing alias effortLevel is never overwritten" {
+    seed_settings '{"modelSettings":{"opus":{"effortLevel":"low"},"fable":{"effortLevel":"xhigh"}}}'
+    run_configure y
+    assert_success
+    refute_output --partial "default reasoning effort per model"
+    assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" \
+        '{"opus":{"effortLevel":"low"},"fable":{"effortLevel":"xhigh"}}'
+}
+
+@test "modelsettings: a dated key counts as that model, no second key beside it" {
+    seed_settings '{"modelSettings":{"claude-opus-5":{"effortLevel":"low"}}}'
+    run_configure y
+    assert_success
+    assert_output --partial "default reasoning effort per model"
+    assert_equal "$(jq -r '.modelSettings["claude-opus-5"].effortLevel' "$HOME/.claude/settings.json")" "low"
+    assert_equal "$(jq -r '.modelSettings | has("opus")' "$HOME/.claude/settings.json")" "false"
+    # Fable had no opinion anywhere, so it still gets the default.
+    assert_equal "$(jq -r '.modelSettings.fable.effortLevel' "$HOME/.claude/settings.json")" "medium"
+}
+
+@test "modelsettings: another model's entry is left alone" {
+    seed_settings '{"modelSettings":{"claude-sonnet-5":{"effortLevel":"low"}}}'
+    run_configure y
+    assert_success
+    assert_equal "$(jq -r '.modelSettings["claude-sonnet-5"].effortLevel' "$HOME/.claude/settings.json")" "low"
+    assert_equal "$(jq -r '.modelSettings.opus.effortLevel' "$HOME/.claude/settings.json")" "high"
+}
+
+@test "modelsettings: a sibling key such as maxEffortLevel survives the merge" {
+    seed_settings '{"modelSettings":{"opus":{"maxEffortLevel":"high"}}}'
+    run_configure y
+    assert_success
+    assert_equal "$(jq -c '.modelSettings.opus' "$HOME/.claude/settings.json")" \
+        '{"maxEffortLevel":"high","effortLevel":"high"}'
+}
+
+@test "modelsettings: declining leaves modelSettings untouched" {
+    seed_settings '{"modelSettings":{}}'
+    run_configure n
+    assert_success
+    assert_output --partial "default reasoning effort per model"
+    assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" '{}'
+}
