@@ -196,3 +196,21 @@ attribution() {
     assert_output --partial "default reasoning effort per model"
     assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" '{}'
 }
+
+# ---- subagent model -------------------------------------------------------
+
+@test "subagentmodel: written when absent" {
+    seed_settings '{"outputStyle":"Concise"}'
+    run_configure y
+    assert_success
+    assert_output --partial "CLAUDE_CODE_SUBAGENT_MODEL=sonnet"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_SUBAGENT_MODEL' "$HOME/.claude/settings.json")" "sonnet"
+}
+
+@test "subagentmodel: an existing choice is never overwritten" {
+    seed_settings '{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku"}}'
+    run_configure y
+    assert_success
+    refute_output --partial "CLAUDE_CODE_SUBAGENT_MODEL=sonnet"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_SUBAGENT_MODEL' "$HOME/.claude/settings.json")" "haiku"
+}

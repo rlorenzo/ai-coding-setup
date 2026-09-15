@@ -586,6 +586,13 @@ CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits 
 # `claude-opus-5` would silently stop applying the day Opus 6 ships.
 CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high"}}'
 
+# Default model for subagents. Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL as
+# the fallback tier: an agent definition's `model:` frontmatter and an explicit
+# spawn-time model both still win over it. Sonnet is the mid tier, so routine
+# search and recon stop billing at the main session's tier. Alias, not a dated
+# ID, for the same reason as CLAUDE_MODEL_SETTINGS above.
+CLAUDE_SUBAGENT_MODEL='sonnet'
+
 # The defaults above whose model has no effortLevel in settings.json yet. An
 # existing key counts as that model when it contains the alias, so a hand-written
 # `claude-opus-5`, `opus[1m]` or a Bedrock spelling all mean "opus is already
@@ -638,6 +645,9 @@ configure_claude_settings() {
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
         feature_changes+=("teams")
+    fi
+    if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_SUBAGENT_MODEL' &>/dev/null; then
+        feature_changes+=("subagentmodel")
     fi
     # Only offer when no output style is set, so a user's explicit choice of a
     # different style is never overridden.
@@ -695,6 +705,7 @@ configure_claude_settings() {
                 websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
+                subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium, Opus high)" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
@@ -710,6 +721,8 @@ configure_claude_settings() {
                     websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                    subagentmodel) updated=$(echo "$updated" | jq --arg m "$CLAUDE_SUBAGENT_MODEL" \
+                                       '.env = ((.env // {}) + {"CLAUDE_CODE_SUBAGENT_MODEL": $m})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
                     modelsettings) updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
                                        "$CLAUDE_MODEL_SETTINGS_MISSING"' as $add | .modelSettings = ((.modelSettings // {}) * $add)') ;;
@@ -756,6 +769,15 @@ configure_claude_settings() {
 
 # ---- Codex CLI settings configuration ---------------------------------------
 
+# Default model and reasoning effort for Codex subagents. Codex resolves each
+# from the spawn call, then the agent file, then these [agents] defaults, then
+# the parent session, so this only sets the floor. Terra is the mid-tier
+# workhorse (roughly Sonnet's cost/performance slot); medium is the effort
+# OpenAI recommends for it. Pinned explicitly so a future model default cannot
+# quietly move it.
+CODEX_SUBAGENT_MODEL='gpt-5.6-terra'
+CODEX_SUBAGENT_EFFORT='medium'
+
 configure_codex_settings() {
     local config_file="$HOME/.codex/config.toml"
 
@@ -780,6 +802,11 @@ configure_codex_settings() {
         changes+=("add_multi_agent")
     fi
 
+    # Check for subagent defaults under [agents]
+    if ! grep -qE '^default_subagent_model\s*=' "$config_file" 2>/dev/null; then
+        changes+=("add_subagent_defaults")
+    fi
+
     if [[ ${#changes[@]} -eq 0 ]]; then
         echo -e "  ${DIM}Settings already configured, nothing to do${NC}"
         return
@@ -792,6 +819,7 @@ configure_codex_settings() {
         case "$change" in
             remove_collab)   echo -e "  • ${BOLD}Remove collab${NC}: deprecated, replaced by multi_agent" ;;
             add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC}: enable multi-agent collaboration" ;;
+            add_subagent_defaults) echo -e "  • ${BOLD}[agents] defaults${NC}: run subagents on ${CODEX_SUBAGENT_MODEL} at ${CODEX_SUBAGENT_EFFORT} effort instead of inheriting your main model" ;;
         esac
     done
     echo ""
@@ -811,6 +839,27 @@ multi_agent = true' "$config_file"
                         rm -f "${config_file}.bak"
                     else
                         printf '\n[features]\nmulti_agent = true\n' >> "$config_file"
+                    fi
+                    ;;
+                add_subagent_defaults)
+                    if grep -qE '^\[agents\]' "$config_file" 2>/dev/null; then
+                        # Insert under the existing header; TOML forbids a
+                        # second [agents] table. awk, not sed, because the
+                        # appended text is two interpolated lines, and the
+                        # values go in as separate -v vars since awk rejects a
+                        # newline inside a -v assignment.
+                        awk -v m="$CODEX_SUBAGENT_MODEL" -v e="$CODEX_SUBAGENT_EFFORT" '
+                            { print }
+                            /^\[agents\]/ && !ins {
+                                printf "default_subagent_model = \"%s\"\n", m
+                                printf "default_subagent_reasoning_effort = \"%s\"\n", e
+                                ins = 1
+                            }
+                        ' "$config_file" > "${config_file}.tmp" \
+                            && mv "${config_file}.tmp" "$config_file"
+                    else
+                        printf '\n[agents]\ndefault_subagent_model = "%s"\ndefault_subagent_reasoning_effort = "%s"\n' \
+                            "$CODEX_SUBAGENT_MODEL" "$CODEX_SUBAGENT_EFFORT" >> "$config_file"
                     fi
                     ;;
             esac
