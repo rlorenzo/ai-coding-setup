@@ -74,6 +74,7 @@ The marketplace holds three plugins:
 | `ai-coding-setup` | The seven commands | — |
 | `explore-agent` | The Explore subagent as an agent file that shadows the built-in | — |
 | [`explore-model`](mods/explore-model) | The same pinning as an `agent.spawn` function hook, with no shadow | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
+| [`review-gate`](mods/review-gate) | The review gate as a `tool.check` function hook | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
 
 `explore-agent` and `explore-model` do the same job two ways and you want exactly one of them; see [Explore](#explore). `setup` installs whichever your session can run and removes the other.
 
@@ -246,6 +247,34 @@ claude plugin install explore-model@ai-coding-setup --scope user \
 ```
 
 Note that this is a floor on cost, not the only one: `setup` also offers `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, which is the fallback tier for *every* subagent. The mod is the narrower, cheaper pin for the one agent Claude dispatches on its own.
+
+### review-gate mod
+
+The [review gate](#review-gate) as a `tool.check` hook. Same gate, better seat.
+
+`bin/review-gate` is wired as a `PreToolUse` shell hook and fires on **every command the agent runs** — overwhelmingly `ls`, `cat` and test runs — each one paying a process start. Measured in this repo: roughly 160ms warm under Git Bash on Windows against 55ms for a bare `bash -c true`, and over a second on a cold file cache. The script's fast path exits before any git call, but bash still has to start.
+
+The mod answers that same question with a substring test inside the engine's own process, and spawns the script only for a command that could actually be a commit. On the calls that dominate, the cost goes to zero.
+
+The second gain is `ask`. A `PreToolUse` hook can only allow or deny, which is why the gate ships in `warn` and why its own docs describe handing the question back to you as something it cannot do — the closest it gets is denying and asking the *agent* to ask you. `tool.check` can answer `ask`, so a blocked commit becomes your permission prompt, carrying the gate's reason, diff and rubric.
+
+**What the mod does not do is decide anything.** The rules — which commands commit, what a receipt has to match, when a rewrite is in progress, the `git commit -a` cases that can never be vouched for — stay in `bin/review-gate`, which the mod runs with the claude payload it already speaks and reads the JSON it already prints. One implementation, one test suite, no second copy to drift, and both routes read the same receipts under `.git/ai-review/`, so they can never disagree about whether a change was reviewed.
+
+That last point is why the mod does **not** keep receipts in the engine's own `$.store`, which would have been the obvious place: `code-review-loop` writes the receipts, and a store only the mod can read would mean the loop's clean run no longer cleared the gate.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `blocked` | `ask` | What a blocked commit does. `ask` puts the gate's reason to you as a permission prompt. `deny` refuses outright, matching `REVIEW_GATE=block`. |
+| `gate` | unset | Where `bin/review-gate` is. Unset, the hook tries `AI_REVIEW_GATE_BIN`, then `~/.local/bin/review-gate`, then `review-gate` on `PATH`. |
+
+The script's own modes still decide everything else: `REVIEW_GATE=off` and the `AI_REVIEW_GATE=off` bypass work exactly as they do without the mod, and in `warn` mode the gate's reasoning goes to the transcript instead of a stderr nobody reads.
+
+Install the two together and the script runs twice for one commit, issuing a second single-use nonce that invalidates the first, so `setup` removes the `PreToolUse` entry when it installs the mod.
+
+```bash
+claude plugin install review-gate@ai-coding-setup --scope user \
+    --config blocked=ask --config gate="$HOME/.local/bin/review-gate"
+```
 
 ## Review Loops
 

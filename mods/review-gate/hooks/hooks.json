@@ -1,0 +1,4 @@
+{
+  "description": "A tool.check hook on the shell tools: it answers every call that cannot be a commit in process, and delegates the rest to bin/review-gate, turning a block into an ask",
+  "modules": ["./register.ts"]
+}

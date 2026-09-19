@@ -43,6 +43,18 @@
         "model",
         "explore"
       ]
+    },
+    {
+      "name": "review-gate",
+      "source": "./mods/review-gate",
+      "description": "The review gate as a tool.check function hook: every shell call decided in process, the script spawned only for a command that could commit, and a blocked commit put to you as a question rather than refused. Needs CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 and bin/review-gate installed.",
+      "category": "code-quality",
+      "keywords": [
+        "code-review",
+        "git",
+        "commit",
+        "hook"
+      ]
     }
   ]
 }
