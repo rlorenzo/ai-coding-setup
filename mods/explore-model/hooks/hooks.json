@@ -1,0 +1,4 @@
+{
+  "description": "An agent.spawn hook that sets the model for the recon subagents named in the agents option (Explore by default), leaving a fork and any spawn that named its own model alone",
+  "modules": ["./register.ts"]
+}

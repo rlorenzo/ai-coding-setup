@@ -2,7 +2,7 @@
   "name": "ai-coding-setup",
   "displayName": "AI Coding Setup",
   "version": "0.1.0",
-  "description": "The review and git workflow commands from ai-coding-setup: /commitmsg, /code-review, /code-refinement, /dependency-review, /review-pr, /git-history-cleanup and /efficient-orchestration, plus the Explore subagent that pins background codebase searches to a cheap model.",
+  "description": "The review and git workflow commands from ai-coding-setup: /commitmsg, /code-review, /code-refinement, /dependency-review, /review-pr, /git-history-cleanup and /efficient-orchestration.",
   "author": {
     "name": "Rex Lorenzo",
     "url": "https://github.com/rlorenzo"

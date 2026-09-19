@@ -69,12 +69,12 @@ repos:
       - id: skillspector-agent
         name: SkillSpector scan of the Explore agent
         entry: skillspector
-        args: ["scan", "agents/Explore.md", "--no-llm"]
+        args: ["scan", "plugins/explore-agent/agents/Explore.md", "--no-llm"]
         language: python
         additional_dependencies:
           - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
         pass_filenames: false
-        files: ^agents/
+        files: ^plugins/explore-agent/agents/
         stages: [pre-commit]
 
       - id: bats-unit-tests

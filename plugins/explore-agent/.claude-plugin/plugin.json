@@ -1,0 +1,14 @@
+{
+  "name": "explore-agent",
+  "displayName": "Explore Agent",
+  "version": "0.1.0",
+  "description": "A user-level Explore subagent that shadows Claude Code's built-in and pins it to haiku at low effort, so background codebase searches stop billing at the main session's tier. For sessions without function hooks; where those are available the explore-model mod does the same thing without the shadow.",
+  "author": {
+    "name": "Rex Lorenzo",
+    "url": "https://github.com/rlorenzo"
+  },
+  "homepage": "https://github.com/rlorenzo/ai-coding-setup#explore",
+  "repository": "https://github.com/rlorenzo/ai-coding-setup",
+  "license": "MIT",
+  "keywords": ["cost", "subagent", "model", "explore"]
+}

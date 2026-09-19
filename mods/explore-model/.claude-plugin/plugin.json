@@ -1,0 +1,38 @@
+{
+  "name": "explore-model",
+  "displayName": "Explore Model",
+  "version": "0.1.0",
+  "description": "Pins the model that background recon subagents run on. An agent.spawn hook sets the Explore subagent's model to haiku, so a session driven by an expensive model stops billing its codebase searches at that tier, without shadowing the built-in agent definition and without the CLAUDE.md load a replacement definition would cost.",
+  "author": {
+    "name": "Rex Lorenzo",
+    "url": "https://github.com/rlorenzo"
+  },
+  "homepage": "https://github.com/rlorenzo/ai-coding-setup#explore-model",
+  "repository": "https://github.com/rlorenzo/ai-coding-setup",
+  "license": "MIT",
+  "keywords": ["cost", "subagent", "model", "explore"],
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Model for the pinned agents",
+      "description": "The model alias or id the named agents run on, e.g. \"haiku\" or \"sonnet\". Prefer an alias: it tracks whichever model currently answers to that name, where a dated id stops applying the day the next one ships. Set \"inherit\" to register no hook at all, which leaves every spawn as Claude Code resolves it.",
+      "required": false,
+      "default": "haiku"
+    },
+    "agents": {
+      "type": "string",
+      "title": "Agents to pin",
+      "description": "The subagent types this applies to, by the name the Agent tool resolves. Only agents whose work is read-only recon belong here: a pinned agent runs on the model above whatever its own definition asks for.",
+      "required": false,
+      "multiple": true,
+      "default": ["Explore"]
+    },
+    "notice": {
+      "type": "boolean",
+      "title": "Announce each pin",
+      "description": "Attach a one-line notice to each spawn the hook pins. Off by default, since the point of the hook is to be invisible; turn it on to confirm it is loaded and firing.",
+      "required": false,
+      "default": false
+    }
+  }
+}
