@@ -1,0 +1,18 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "ai-coding-setup",
+  "owner": {
+    "name": "Rex Lorenzo",
+    "url": "https://github.com/rlorenzo"
+  },
+  "description": "Prompts, skills, and scripts for driving AI coding agents through review and git workflows.",
+  "plugins": [
+    {
+      "name": "ai-coding-setup",
+      "source": ".",
+      "description": "The review and git workflow commands: /commitmsg, /code-review, /code-refinement, /dependency-review, /review-pr, /git-history-cleanup and /efficient-orchestration, plus the Explore subagent.",
+      "category": "code-quality",
+      "keywords": ["code-review", "commit-message", "dependency-review", "git", "pull-request"]
+    }
+  ]
+}
