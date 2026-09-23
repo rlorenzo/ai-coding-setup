@@ -23,7 +23,7 @@
     "gate": {
       "type": "file",
       "title": "Path to the review-gate script",
-      "description": "Where bin/review-gate lives. Left unset, the hook looks at AI_REVIEW_GATE_BIN, then ~/.local/bin/review-gate, then review-gate on PATH, and stays out of the way entirely if it finds none.",
+      "description": "Where bin/review-gate lives. Left unset, the hook looks at AI_REVIEW_GATE_BIN, then ~/.local/bin/review-gate, then review-gate on PATH. If none of those runs, the hook allows the commit rather than blocking it.",
       "required": false
     }
   }
