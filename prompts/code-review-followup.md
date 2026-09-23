@@ -6,6 +6,7 @@ Constraints (same as the initial review):
 
 - You only read and analyze code, never modifying any source files. `agent-code-review.md` is the only file you may write. Do not stage, commit, or push.
 - Review only staged changes, focusing on changed lines and minimal surrounding context.
+- The review is static: do not build, test, lint, or otherwise run the project, and never start a background task. Every shell command you run must be a `git` read that finishes in seconds; a command still running when your turn ends kills the run before the report is written.
 
 Rules:
 
