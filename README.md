@@ -53,8 +53,8 @@ The script detects which AI tools you have installed and walks you through insta
 
 | Tool | Command format | Source directory | Installs to |
 | --- | --- | --- | --- |
-| Claude Code | Markdown (`.md`) | `.claude/commands/` | `~/.claude/commands/` |
-| Claude Code agents | Markdown (`.md`) | `.claude/agents/` | `~/.claude/agents/` |
+| Claude Code | Plugin (`.claude-plugin/`) | `.claude/commands/`, `agents/` | loaded in place from the clone |
+| Claude Code (copy fallback) | Markdown (`.md`) | `.claude/commands/`, `agents/` | `~/.claude/commands/`, `~/.claude/agents/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
 | Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Antigravity CLI | Unified Plugin (`plugin.json`) | `.antigravity/` | `~/.gemini/antigravity-cli/plugins/ai-coding-setup/` |
@@ -62,6 +62,30 @@ The script detects which AI tools you have installed and walks you through insta
 | Shared prompts | Markdown (`.md`) | `prompts/` | `~/.local/share/ai-coding-setup/prompts/` |
 
 Kimi Code reads its user-level data from `$KIMI_CODE_HOME` when that variable is set; `setup` honors it and falls back to `~/.kimi-code`. Kimi invokes skills as `/skill:<name>`, so the commands below are `/skill:commitmsg`, `/skill:review-pr`, and so on.
+
+## Claude Code Plugin
+
+Claude Code is the one harness here with a plugin system of its own, and `setup` uses it by default: instead of copying seven Markdown files into `~/.claude/commands/`, it registers this clone as a marketplace and installs the `ai-coding-setup` plugin from it.
+
+```bash
+claude plugin marketplace add ./          # from inside the clone
+claude plugin install ai-coding-setup@ai-coding-setup --scope user
+```
+
+Three things are better this way:
+
+- **Updates are a `git pull`.** The plugin loads in place from the clone, so pulling new commands makes them live at the next session start. The copy path needs another `./setup` run to notice.
+- **Removal is one command.** `claude plugin uninstall ai-coding-setup` takes all seven commands and the agent with it, where the copies have to be deleted one by one.
+- **Nothing is written into `~/.claude/commands/`.** A command of your own that happens to share a name is never shadowed, and the source markers and stale-orphan pruning the copy path needs stop mattering.
+
+The trade-off is that the plugin loads *in place*: move or delete the clone and the commands go with it. A copy would have survived. If that matters more than live updates, answer `n` at the plugin prompt and `setup` falls back to copying, exactly as before. Either way it offers to remove whichever set it did not install, so no command is ever listed twice.
+
+To install without a clone at all, point the marketplace at the repo:
+
+```bash
+claude plugin marketplace add rlorenzo/ai-coding-setup
+claude plugin install ai-coding-setup@ai-coding-setup --scope user
+```
 
 ## Available Commands
 
@@ -153,13 +177,15 @@ Rewrite a feature branch's git history into focused, logical commits before revi
 
 ## Claude Code Agents
 
-Beyond commands, `setup` installs user-level subagent definitions from [.claude/agents/](.claude/agents/) to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
+The plugin also carries the subagent definitions in [agents/](agents/); on the copy path `setup` installs them to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
+
+They live at the repo root rather than under `.claude/` because that is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate` passes, the install succeeds — and the agent is silently missing from the loaded plugin. Only the root `agents/` directory convention registers one, so `plugin.json` names no `agents` key at all and `test/plugin-manifest.bats` fails if one is added.
 
 ### Explore
 
 Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in (a user-level agent with the same name overrides it, which the docs explicitly support) and pins exploration back to `haiku` at `effort: low` with read-only tools.
 
-Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. To remove it, delete `~/.claude/agents/Explore.md`.
+Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. To remove it, uninstall the plugin, or delete `~/.claude/agents/Explore.md` if you took the copy path.
 
 ## Review Loops
 
@@ -478,7 +504,7 @@ style here:
 
 Delete the command/skill from the corresponding directory (or uninstall the plugin for Antigravity):
 
-- Claude: `~/.claude/commands/` (agents: `~/.claude/agents/`)
+- Claude: `claude plugin uninstall ai-coding-setup`, then `claude plugin marketplace remove ai-coding-setup`. On the copy path, delete from `~/.claude/commands/` (agents: `~/.claude/agents/`)
 - Codex: `~/.codex/skills/`
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
@@ -552,7 +578,7 @@ Two pre-commit hooks run it, and the `Lint` workflow runs every pre-commit hook 
 - The gate is the exit code: `0` for `SAFE` or `CAUTION`, `1` for `DO_NOT_INSTALL` (a risk score above 50), `2` for an error. Only a genuinely bad score blocks a commit. The `CAUTION` findings print and let you through, which is the intent: `git-history-cleanup` scores 25 for the `git reset --hard` and `--force-with-lease` in its own instructions, and a skill about rewriting history is going to mention rewriting history.
 - The dependency is pinned to the commit behind `v2.11.0`. SkillSpector is not on PyPI, so it installs from a git URL, and a tag can be moved where a commit cannot.
 - Only the Codex copies of the skills are scanned. `tools/generate` renders every harness from the canonical `.claude/commands/` sources and the `generated-files-in-sync` hook proves they match, so the bodies are byte-identical and scanning four copies would buy three more runs and nothing else.
-- `.claude/agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
+- `agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
 
 To run it by hand:
 

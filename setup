@@ -570,6 +570,100 @@ install_commands() {
     echo -e "  ${BOLD}${display_name}:${NC} $installed installed, $updated updated, $current up to date, $skipped skipped${prune_note}"
 }
 
+# ---- Claude Code plugin ----------------------------------------------------
+
+# Claude Code can load this clone as a plugin instead of copying each command
+# into ~/.claude/commands. That is better in three ways: the marketplace entry
+# points at this working tree, so `git pull` updates every command at the next
+# session start rather than needing another `./setup` run; the commands arrive
+# versioned, and one `claude plugin uninstall` removes all of them together;
+# and nothing lands in ~/.claude/commands, so a command of your own that
+# happens to share a name is never shadowed.
+#
+# The trade-off is that the plugin loads in place. Move or delete this clone
+# and the commands go with it, where a copy would have survived.
+CLAUDE_PLUGIN_NAME="ai-coding-setup"
+CLAUDE_MARKETPLACE_NAME="ai-coding-setup"
+
+# Whether this `claude` is new enough to have the plugin CLI at all. Plugins
+# landed well before the marketplace subcommand, so probe the one we call.
+claude_plugin_supported() {
+    claude plugin marketplace --help &>/dev/null
+}
+
+# Our own copies of what the plugin now provides. Marker-carrying files only,
+# so a command the user wrote by hand is never a candidate, and only names the
+# repo still ships, so this never collides with the stale-orphan prune in
+# install_commands.
+list_claude_copies() {
+    local src dest base
+    for src in .claude/commands/*.md agents/*.md; do
+        [[ -f "$src" ]] || continue
+        base=$(basename "$src")
+        case "$src" in
+            .claude/commands/*) dest="$HOME/.claude/commands/$base" ;;
+            *)                  dest="$HOME/.claude/agents/$base" ;;
+        esac
+        [[ -f "$dest" ]] || continue
+        has_marker "$MD_MARKER" "$dest" || continue
+        printf '%s\n' "$dest"
+    done
+}
+
+# Removes the copies the plugin has made redundant. Default yes: leaving them
+# means every command shows up twice, once from each source, which is worse
+# than the usual "never drop anything without asking" default.
+prune_claude_copies() {
+    local copies=() f
+    while IFS= read -r f; do copies+=("$f"); done < <(list_claude_copies)
+    [[ ${#copies[@]} -eq 0 ]] && return 0
+
+    echo ""
+    echo "  ${#copies[@]} command(s) previously copied into ~/.claude are now"
+    echo "  provided by the plugin. Leaving them means each one is listed twice."
+    if ! $FORCE && ! prompt_yes_no "  Remove the copies?"; then
+        print_info "Kept the copies; expect duplicate entries"
+        return 0
+    fi
+    for f in "${copies[@]}"; do
+        rm -f "$f" && print_success "Removed copy $(basename "$f")"
+    done
+}
+
+# Returns 0 when the plugin is installed and the caller should skip the copies,
+# 1 when the CLI is too old or the user declined.
+install_claude_plugin() {
+    echo ""
+    echo -e "${BOLD}── Claude Code Plugin ──${NC}"
+
+    if ! claude_plugin_supported; then
+        print_warning "This claude has no plugin marketplace command; copying files instead"
+        return 1
+    fi
+
+    echo "  Installs the commands and the Explore agent as the"
+    echo "  ${CLAUDE_PLUGIN_NAME} plugin, loaded from $PWD."
+    echo -e "  ${DIM}git pull then updates them; no files are copied into ~/.claude${NC}"
+    if ! prompt_yes_no "  Install as a plugin?"; then
+        print_info "Skipped; copying the command files instead"
+        return 1
+    fi
+
+    if ! claude plugin marketplace add "$PWD"; then
+        print_error "claude plugin marketplace add failed; copying files instead"
+        return 1
+    fi
+    if ! claude plugin install "${CLAUDE_PLUGIN_NAME}@${CLAUDE_MARKETPLACE_NAME}" \
+        --scope user --yes; then
+        print_error "claude plugin install failed; copying files instead"
+        return 1
+    fi
+
+    print_success "Installed the ${CLAUDE_PLUGIN_NAME} plugin"
+    prune_claude_copies
+    return 0
+}
+
 # ---- Claude Code settings configuration ------------------------------------
 
 # Status line that mirrors the real plan quota to ~/.claude/rate_limits.json so
@@ -1502,12 +1596,16 @@ fi
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
         claude)
-            install_commands "Claude Code" \
-                ".claude/commands" "$HOME/.claude/commands" \
-                "file:md" "$MD_MARKER" "/" "get_md_description"
-            install_commands "Claude Code Agents" \
-                ".claude/agents" "$HOME/.claude/agents" \
-                "file:md" "$MD_MARKER" "" "get_md_description"
+            # The plugin carries both the commands and the agent, so the copies
+            # only run when it is unavailable or declined.
+            if ! install_claude_plugin; then
+                install_commands "Claude Code" \
+                    ".claude/commands" "$HOME/.claude/commands" \
+                    "file:md" "$MD_MARKER" "/" "get_md_description"
+                install_commands "Claude Code Agents" \
+                    "agents" "$HOME/.claude/agents" \
+                    "file:md" "$MD_MARKER" "" "get_md_description"
+            fi
             configure_claude_settings
             configure_mcp "claude" "Claude Code" "claude"
             ;;
