@@ -13,7 +13,8 @@ MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 
 # Every plugin source the marketplace lists, as repo-relative paths.
 plugin_sources() {
-    jq -r '.plugins[].source' "$PROJECT_ROOT/$MARKETPLACE_JSON"
+    # jq on Windows ends lines with CRLF, which would leave a \r on each path.
+    jq -r '.plugins[].source' "$PROJECT_ROOT/$MARKETPLACE_JSON" | tr -d '\r'
 }
 
 @test "marketplace.json is valid JSON" {
