@@ -5,6 +5,14 @@
 # Absolute path to the project root
 PROJECT_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 
+# Run from a git hook (the pre-commit suite), git exports GIT_INDEX_FILE, and
+# in a linked worktree GIT_DIR too. Left set, they point every throwaway repo a
+# test creates at the repository being committed to, which fails tests in a
+# plain checkout and rewrites the real repo's config and branches in a
+# worktree. Drop every repo-local variable git would honor.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 # Load BATS helper libraries
 load "$PROJECT_ROOT/test/bats/bats-support/load"
 load "$PROJECT_ROOT/test/bats/bats-assert/load"
