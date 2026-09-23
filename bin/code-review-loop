@@ -473,10 +473,28 @@ IMPORTANT: You MUST overwrite agent-code-review.md with your updated findings.$S
     local_exit=0
     AGENT_LOG="$RUN_LOG_DIR/6.$iteration-review.$REVIEWER_AGENT.log" \
         run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
+
+    # An agent can exit 0 without writing anything (see run_antigravity), which
+    # would leave the previous cycle's report in place and let a stale "good to
+    # go" end the loop.  The snapshot was written just before the run, so a
+    # report older than it was never rewritten.  Read before the cleanup below,
+    # not after: cleanup_agent_artifacts consumes the snapshot, and `-ot`
+    # against a missing file is false, so the check would silently always pass.
+    # Strictly newer, not merely not-older: equal mtimes mean the report was
+    # not written after the snapshot, and a coarse filesystem resolution makes
+    # that the stale case, not a fresh one.
+    review_rewritten=true
+    [[ -f "$REVIEW_FILE" && "$REVIEW_FILE" -nt "$pre_snapshot" ]] || review_rewritten=false
     cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
         write_status "$REVIEWER_AGENT follow-up review failed (exit $local_exit), aborting review loop" "$YELLOW"
+        break
+    fi
+
+    if [[ "$review_rewritten" == false ]]; then
+        write_status "$REVIEWER_AGENT follow-up review exited 0 without rewriting the review file, aborting review loop" "$RED"
+        write_status "Log: $RUN_LOG_DIR/6.$iteration-review.$REVIEWER_AGENT.log" "$RED"
         break
     fi
 

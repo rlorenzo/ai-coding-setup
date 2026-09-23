@@ -179,6 +179,18 @@ $prompt"
 # -p value disables stdin reading, and whitespace-only -p values are rejected
 # as an empty prompt. A piped stdin prompt alone still enters print mode.
 # --print-timeout raises the 5m print-mode default; reviews can run longer.
+#
+# KNOWN LIMITATION (agy 1.2.8): agy will run verification commands (builds,
+# lint) on its own from a repo's CLAUDE.md/AGENTS.md even when the prompt says
+# to read only, and it runs them as background tasks.  When the model then ends
+# its turn to "wait" for one, print mode gives background work a hardcoded 5s
+# grace ("root agent idle; waiting up to 5s for N background task(s)"), kills
+# it, and exits 0 -- having written nothing.  --print-timeout does not cover
+# this; it bounds the turn, not the drain.  There is no agy flag or env var for
+# the grace period, and REVIEWER_TOOLS is claude-only, so the lever is the
+# prompt: prompts/code-review.md and code-review-followup.md forbid running the
+# project and starting background tasks.  Callers must still treat "exit 0, no
+# output file" as a failure.
 #   $1: prompt text
 run_antigravity() {
     local prompt="$1"
