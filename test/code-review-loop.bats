@@ -318,3 +318,60 @@ init_branch_repo() { # init_branch_repo <dir name>
     assert_success
     git diff --staged --name-only | grep -qx f
 }
+
+# =========================================================================
+# Follow-up review: did the reviewer actually rewrite the report?
+#
+# agy can exit 0 having written nothing (see run_antigravity). On the follow-up
+# path that leaves the previous cycle's report in place, so the loop would read
+# stale findings and could end on a stale verdict.
+# =========================================================================
+
+# A stub agent that counts its calls in $STUB_CALLS and writes a report holding
+# one High, so the loop never goes clean and always reaches a follow-up review.
+# Setting STUB_SKIP_REPORT to a call number makes that one call write nothing,
+# which is the agy failure being reproduced. The sleep keeps each report
+# strictly newer than the snapshot taken before the call, on a filesystem whose
+# mtime resolution is a whole second.
+write_counting_stub_agent() { # write_counting_stub_agent [call number to skip]
+    mkdir -p stub
+    cat > stub/claude <<'STUB'
+#!/usr/bin/env bash
+cat > /dev/null
+n=$(cat "$STUB_CALLS" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$STUB_CALLS"
+echo "stub call $n"
+if [ "$n" != "$STUB_SKIP_REPORT" ]; then
+    sleep 1
+    printf '# R\n\nHigh: 1\nMedium: 0\nLow: 0\n' > agent-code-review.md
+fi
+exit 0
+STUB
+    chmod +x stub/claude
+    PATH="$PWD/stub:$PATH"
+    export STUB_CALLS="$BATS_TEST_TMPDIR/calls"
+    export STUB_SKIP_REPORT="${1:-}"
+}
+
+@test "a follow-up reviewer that exits 0 without rewriting the report aborts the loop" {
+    init_staged_repo repo
+    # Calls are: 3 initial review, 4.1 editor response, 6.1 follow-up review.
+    write_counting_stub_agent 3
+    use_checkout_prompts
+
+    run "$BIN" -s -m 1 -e claude -r claude
+    assert_output --partial "without rewriting the review file"
+    # The stale report must not be read as this cycle's result.
+    refute_output --partial "After cycle 1"
+}
+
+@test "a follow-up reviewer that rewrites the report keeps the loop going" {
+    init_staged_repo repo
+    write_counting_stub_agent
+    use_checkout_prompts
+
+    run "$BIN" -s -m 1 -e claude -r claude
+    refute_output --partial "without rewriting the review file"
+    assert_output --partial "After cycle 1"
+}
