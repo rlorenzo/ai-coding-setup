@@ -214,3 +214,36 @@ attribution() {
     refute_output --partial "CLAUDE_CODE_SUBAGENT_MODEL=sonnet"
     assert_equal "$(jq -r '.env.CLAUDE_CODE_SUBAGENT_MODEL' "$HOME/.claude/settings.json")" "haiku"
 }
+
+# ---- classic review-gate hook removal -------------------------------------
+
+run_remove_gate() {
+    setup_defs
+    run bash -c "source '$DEFS'; remove_classic_review_gate_hook"
+}
+
+@test "gatehook: only the gate's hook leaves an entry it shares with others" {
+    seed_settings '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[
+        {"type":"command","command":"~/.local/bin/review-gate"},
+        {"type":"command","command":"my-own-hook"}]}]}}'
+    run_remove_gate
+    assert_success
+    assert_equal "$(jq -c '[.hooks.PreToolUse[].hooks[].command]' "$HOME/.claude/settings.json")" '["my-own-hook"]'
+}
+
+@test "gatehook: an entry left empty is removed, and PreToolUse with it" {
+    seed_settings '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[
+        {"type":"command","command":"~/.local/bin/review-gate"}]}]}}'
+    run_remove_gate
+    assert_success
+    assert_equal "$(jq -c '.hooks | has("PreToolUse")' "$HOME/.claude/settings.json")" "false"
+}
+
+@test "gatehook: other entries are left alone" {
+    seed_settings '{"hooks":{"PreToolUse":[
+        {"matcher":"Bash","hooks":[{"type":"command","command":"~/.local/bin/review-gate"}]},
+        {"matcher":"Edit","hooks":[{"type":"command","command":"my-own-hook"}]}]}}'
+    run_remove_gate
+    assert_success
+    assert_equal "$(jq -c '[.hooks.PreToolUse[].matcher]' "$HOME/.claude/settings.json")" '["Edit"]'
+}

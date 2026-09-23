@@ -1432,9 +1432,15 @@ remove_classic_review_gate_hook() {
     [[ -f "$settings_file" ]] || return 0
     jq -e '[.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""]
            | any(test("review-gate"))' "$settings_file" &>/dev/null || return 0
+    # Remove only the gate's own hook, not the whole matcher entry: an entry can
+    # carry other hooks of the user's alongside it. An entry left with no hooks
+    # goes too, and so does PreToolUse once it is empty.
     updated=$(jq '
-        .hooks.PreToolUse |= map(select(
-            [.hooks // [] | .[] | .command // ""] | any(test("review-gate")) | not))
+        .hooks.PreToolUse |= (
+            map(if .hooks then
+                    .hooks |= map(select(.command // "" | test("review-gate") | not))
+                else . end)
+            | map(select(.hooks == null or (.hooks | length) > 0)))
         | if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
         ' "$settings_file") || return 0
     printf '%s\n' "$updated" | jq . > "$settings_file"
