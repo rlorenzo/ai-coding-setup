@@ -1,0 +1,30 @@
+{
+  "name": "review-gate",
+  "displayName": "Review Gate",
+  "version": "0.1.0",
+  "description": "The review gate as a tool.check function hook. Every shell call is decided in process, so the non-commit calls -- almost all of them -- cost no subprocess at all, and a blocked commit can be put to you as a question instead of refused outright. The decision itself is still bin/review-gate, run only for a command that mentions a commit, so both routes read the same receipts and cannot disagree.",
+  "author": {
+    "name": "Rex Lorenzo",
+    "url": "https://github.com/rlorenzo"
+  },
+  "homepage": "https://github.com/rlorenzo/ai-coding-setup#review-gate-mod",
+  "repository": "https://github.com/rlorenzo/ai-coding-setup",
+  "license": "MIT",
+  "keywords": ["code-review", "git", "commit", "hook"],
+  "userConfig": {
+    "blocked": {
+      "type": "string",
+      "title": "What a blocked commit does",
+      "description": "\"ask\" (default) puts the gate's reason to you as a permission prompt, which the shell-hook route cannot do: it can only refuse and hand the agent a reason. \"deny\" refuses the commit outright, matching REVIEW_GATE=block exactly.",
+      "required": false,
+      "default": "ask",
+      "options": ["ask", "deny"]
+    },
+    "gate": {
+      "type": "file",
+      "title": "Path to the review-gate script",
+      "description": "Where bin/review-gate lives. Left unset, the hook looks at AI_REVIEW_GATE_BIN, then ~/.local/bin/review-gate, then review-gate on PATH. If none of those runs, the hook allows the commit rather than blocking it.",
+      "required": false
+    }
+  }
+}

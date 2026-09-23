@@ -1416,6 +1416,69 @@ install_scripts() {
 
 # ---- review gate hook ------------------------------------------------------
 #
+# The same gate as a function hook, where the session can run one. It decides
+# every shell call in process and spawns the script only for a command that
+# could be a commit, so the per-call cost the classic hook pays on `ls` and
+# `cat` disappears; and it can answer `ask`, which a PreToolUse hook cannot,
+# so a blocked commit becomes a question rather than a refusal. The rules stay
+# in bin/review-gate either way, so the two cannot disagree.
+CLAUDE_REVIEW_GATE_MOD="review-gate"
+
+# A jq def naming the classic hook: a command whose executable, quoted or not,
+# is review-gate. Matching the executable rather than the substring keeps a
+# user's own my-review-gate, or an echo that mentions it, out of reach.
+REVIEW_GATE_JQ_DEF='def is_gate: test("^\\s*\"?([^\"]*[/\\\\])?review-gate\"?(\\s|$)");'
+
+# Drops the classic PreToolUse entry. With the mod loaded it would run the
+# script a second time for the same commit, and issue a second single-use nonce
+# that invalidates the first.
+remove_classic_review_gate_hook() {
+    local settings_file="$HOME/.claude/settings.json" updated
+    [[ -f "$settings_file" ]] || return 0
+    jq -e "$REVIEW_GATE_JQ_DEF"'
+           [.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""] | any(is_gate)' "$settings_file" &>/dev/null || return 0
+    # Remove only the gate's own hook, not the whole matcher entry: an entry can
+    # carry other hooks of the user's alongside it. An entry left with no hooks
+    # goes too, and so does PreToolUse once it is empty.
+    updated=$(jq "$REVIEW_GATE_JQ_DEF"'
+        .hooks.PreToolUse |= (
+            map(if .hooks then
+                    .hooks |= map(select(.command // "" | is_gate | not))
+                else . end)
+            | map(select(.hooks == null or (.hooks | length) > 0)))
+        | if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
+        ' "$settings_file") || return 0
+    printf '%s\n' "$updated" | jq . > "$settings_file"
+    print_info "Removed the PreToolUse hook; the mod runs the same gate"
+}
+
+# Returns 0 when the mod is installed and the caller should not wire the
+# classic hook.
+install_review_gate_mod() {
+    claude_function_hooks_enabled || return 1
+    claude_plugin_supported || return 1
+
+    echo ""
+    echo "  Function hooks are on, so the gate can run inside Claude Code"
+    echo "  instead of as a hook spawned for every shell command. It asks you"
+    echo "  about a blocked commit rather than refusing it outright."
+    if ! prompt_yes_no "  Install the $CLAUDE_REVIEW_GATE_MOD mod?"; then
+        print_info "Skipped the mod; wiring the PreToolUse hook instead"
+        return 1
+    fi
+
+    if ! claude plugin install \
+        "${CLAUDE_REVIEW_GATE_MOD}@${CLAUDE_MARKETPLACE_NAME}" \
+        --scope user --yes --config "blocked=ask" --config "gate=$1"; then
+        print_error "Could not install $CLAUDE_REVIEW_GATE_MOD"
+        return 1
+    fi
+
+    print_success "Installed $CLAUDE_REVIEW_GATE_MOD"
+    remove_classic_review_gate_hook
+    return 0
+}
+
 # bin/review-gate is a PreToolUse hook that denies an agent's `git commit` when
 # the staged change has no clean review on record. Still prompted, but the
 # prompt now defaults to installing: the hook ships in warn mode, so accepting
@@ -1439,6 +1502,10 @@ configure_review_gate_hook() {
     echo ""
     echo -e "${BOLD}── Code Review Gate ──${NC}"
 
+    # The mod supersedes the hook, so it is offered first and the hook wiring
+    # below only runs when it is unavailable or declined.
+    install_review_gate_mod "$gate" && return 0
+
     mkdir -p "$HOME/.claude"
     [[ -f "$settings_file" ]] || echo '{}' > "$settings_file"
 
@@ -1451,12 +1518,12 @@ configure_review_gate_hook() {
     # means this is already wired. Earlier versions wired the matcher as "Bash"
     # alone, which on Windows misses every commit the agent runs through the
     # separate PowerShell tool, so those entries are widened in place.
-    if jq -e '[.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""]
-              | any(test("review-gate"))' "$settings_file" &>/dev/null; then
+    if jq -e "$REVIEW_GATE_JQ_DEF"'
+              [.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""] | any(is_gate)' "$settings_file" &>/dev/null; then
         local widened
-        widened=$(jq '
+        widened=$(jq "$REVIEW_GATE_JQ_DEF"'
             .hooks.PreToolUse |= map(
-                if ([.hooks // [] | .[] | .command // ""] | any(test("review-gate")))
+                if ([.hooks // [] | .[] | .command // ""] | any(is_gate))
                    and (.matcher == "Bash")
                 then .matcher = "Bash|PowerShell" else . end)' "$settings_file") || widened=""
         if [[ -n "$widened" ]] && ! diff -q <(jq -S . "$settings_file") <(printf '%s\n' "$widened" | jq -S .) &>/dev/null; then
