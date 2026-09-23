@@ -53,8 +53,8 @@ The script detects which AI tools you have installed and walks you through insta
 
 | Tool | Command format | Source directory | Installs to |
 | --- | --- | --- | --- |
-| Claude Code | Plugin (`.claude-plugin/`) | `.claude/commands/`, `agents/` | loaded in place from the clone |
-| Claude Code (copy fallback) | Markdown (`.md`) | `.claude/commands/`, `agents/` | `~/.claude/commands/`, `~/.claude/agents/` |
+| Claude Code | Plugin (`.claude-plugin/`) | `.claude/commands/`, `plugins/`, `mods/` | loaded in place from the clone |
+| Claude Code (copy fallback) | Markdown (`.md`) | `.claude/commands/`, `plugins/explore-agent/agents/` | `~/.claude/commands/`, `~/.claude/agents/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
 | Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Antigravity CLI | Unified Plugin (`plugin.json`) | `.antigravity/` | `~/.gemini/antigravity-cli/plugins/ai-coding-setup/` |
@@ -65,11 +65,22 @@ Kimi Code reads its user-level data from `$KIMI_CODE_HOME` when that variable is
 
 ## Claude Code Plugin
 
-Claude Code is the one harness here with a plugin system of its own, and `setup` uses it by default: instead of copying seven Markdown files into `~/.claude/commands/`, it registers this clone as a marketplace and installs the `ai-coding-setup` plugin from it.
+Claude Code is the one harness here with a plugin system of its own, and `setup` uses it by default: instead of copying seven Markdown files into `~/.claude/commands/`, it registers this clone as a marketplace and installs from it.
+
+The marketplace holds three plugins:
+
+| Plugin | What it is | Needs |
+| --- | --- | --- |
+| `ai-coding-setup` | The seven commands | — |
+| `explore-agent` | The Explore subagent as an agent file that shadows the built-in | — |
+| [`explore-model`](mods/explore-model) | The same pinning as an `agent.spawn` function hook, with no shadow | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
+
+`explore-agent` and `explore-model` do the same job two ways and you want exactly one of them; see [Explore](#explore). `setup` installs whichever your session can run and removes the other.
 
 ```bash
 claude plugin marketplace add ./          # from inside the clone
 claude plugin install ai-coding-setup@ai-coding-setup --scope user
+claude plugin install explore-agent@ai-coding-setup --scope user
 ```
 
 Three things are better this way:
@@ -177,15 +188,64 @@ Rewrite a feature branch's git history into focused, logical commits before revi
 
 ## Claude Code Agents
 
-The plugin also carries the subagent definitions in [agents/](agents/); on the copy path `setup` installs them to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
+The subagent definitions ship as the `explore-agent` plugin, from [plugins/explore-agent/agents/](plugins/explore-agent/agents/); on the copy path `setup` installs them to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
 
-They live at the repo root rather than under `.claude/` because that is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate` passes, the install succeeds — and the agent is silently missing from the loaded plugin. Only the root `agents/` directory convention registers one, so `plugin.json` names no `agents` key at all and `test/plugin-manifest.bats` fails if one is added.
+They sit at that plugin's root rather than under `.claude/` because the root `agents/` directory is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate --strict` passes, the install succeeds — and the agent is silently missing from the loaded plugin. So no manifest here names an `agents` key at all, and `test/plugin-manifest.bats` fails if one is added.
 
 ### Explore
 
 Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in (a user-level agent with the same name overrides it, which the docs explicitly support) and pins exploration back to `haiku` at `effort: low` with read-only tools.
 
-Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. To remove it, uninstall the plugin, or delete `~/.claude/agents/Explore.md` if you took the copy path.
+Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. That is the cost the [`explore-model`](#explore-model) mod exists to remove. To remove the agent, `claude plugin uninstall explore-agent`, or delete `~/.claude/agents/Explore.md` if you took the copy path.
+
+#### explore-agent or explore-model
+
+They pin the same thing two ways, and **you want exactly one**:
+
+| | `explore-agent` | `explore-model` |
+| --- | --- | --- |
+| How | An agent file that shadows the built-in | An `agent.spawn` hook that sets the spawn's model |
+| Loads `CLAUDE.md` on every search | Yes | No |
+| Keeps the built-in's definition | No, replaces it | Yes |
+| Needs function hooks | No | Yes |
+
+Install both and you get neither's benefit: the spawn resolves to your shadow definition rather than the built-in, so the `CLAUDE.md` load is back and the hook has nothing left to improve. `setup` installs one and uninstalls the other, and re-running it after you enable function hooks switches you over.
+
+## Mods
+
+A [mod](https://github.com/anthropics/claude-code/tree/main/mods) is a Claude Code plugin whose behavior is a **hooks module**: TypeScript loaded into the engine, one `register(on, options)` entry whose hooks are `($, e, next)` functions wrapping an engine event, Express-middleware style. Where a classic hook is a shell command spawned after the fact, a function hook can rewrite the event, answer it, or refuse it, in process.
+
+Four ship inside Claude Code (`sec-default`, `diff`, `telemetry`, `agents-md`). The ones here live in [mods/](mods/).
+
+**Early access.** Hooks modules load only when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` is set, on Claude Code 2.1.260 or newer, and upstream says the API they are written against may change between releases without notice. `setup` offers to write the flag into `~/.claude/settings.json`, and defaults to No: nothing else in this repo depends on an unreleased API, and a mod that stops loading after an update is a worse surprise than an agent file that never does.
+
+Two things are worth knowing when you install one:
+
+- `claude plugin details <mod>` reports `Hooks (0)`. The inventory counts classic hook matchers; a function-hooks module is not one, so the count reads zero even for a module that loads and fires. It is not a sign the mod is broken.
+- A mod's tests run against a mock engine in a child of the `claude` binary, with no credentials and no home directory: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/explore-model`. CI runs them for every mod; `test/plugin-manifest.bats` runs the same command locally and skips where `claude` is absent.
+
+### explore-model
+
+Pins the model that background recon subagents run on, by hooking `agent.spawn` and setting the spawn's `model`.
+
+This is the same goal as the [`explore-agent`](#explore) plugin and a better way to reach it. The agent file has to *replace* the built-in `Explore` definition to change its model, and a replacement is loaded like any other subagent, so it drags in your `CLAUDE.md` and user memory on every search — which the built-in skips for speed. The hook sets one field on the spawn and leaves the built-in definition running, so there is no shadow and no extra load.
+
+Two spawns are handed straight through. A **fork** inherits its parent's context and model and ignores `model` outright, so rewriting it would only misdescribe what happens. A spawn that **named its own model** was an explicit choice by the caller, and the case the hook is here to decide is the one nobody decided.
+
+It is also the enforcement `/efficient-orchestration` currently has to ask for: that skill instructs the model to pin a model on every spawn, which is a prompt-level plea the model can forget on exactly the code path where forgetting is expensive. The hook makes it an engine-level invariant instead.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `model` | `haiku` | The alias or id the named agents run on. Prefer an alias: it tracks whichever model answers to that name, where a dated id stops applying the day the next one ships. `inherit` registers no hook at all. |
+| `agents` | `Explore` | The subagent types this applies to. Only read-only recon agents belong here: a pinned agent runs on `model` whatever its own definition asks for. |
+| `notice` | `false` | Attach a one-line notice to each spawn the hook pins. Off by default, since the point is to be invisible; turn it on to confirm the mod is loaded and firing. |
+
+```bash
+claude plugin install explore-model@ai-coding-setup --scope user \
+    --config model=haiku --config agents=Explore --config notice=false
+```
+
+Note that this is a floor on cost, not the only one: `setup` also offers `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, which is the fallback tier for *every* subagent. The mod is the narrower, cheaper pin for the one agent Claude dispatches on its own.
 
 ## Review Loops
 
@@ -504,7 +564,7 @@ style here:
 
 Delete the command/skill from the corresponding directory (or uninstall the plugin for Antigravity):
 
-- Claude: `claude plugin uninstall ai-coding-setup`, then `claude plugin marketplace remove ai-coding-setup`. On the copy path, delete from `~/.claude/commands/` (agents: `~/.claude/agents/`)
+- Claude: `claude plugin uninstall ai-coding-setup` (and `explore-agent` or `explore-model`, whichever you have), then `claude plugin marketplace remove ai-coding-setup`. On the copy path, delete from `~/.claude/commands/` (agents: `~/.claude/agents/`)
 - Codex: `~/.codex/skills/`
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
@@ -578,7 +638,7 @@ Two pre-commit hooks run it, and the `Lint` workflow runs every pre-commit hook 
 - The gate is the exit code: `0` for `SAFE` or `CAUTION`, `1` for `DO_NOT_INSTALL` (a risk score above 50), `2` for an error. Only a genuinely bad score blocks a commit. The `CAUTION` findings print and let you through, which is the intent: `git-history-cleanup` scores 25 for the `git reset --hard` and `--force-with-lease` in its own instructions, and a skill about rewriting history is going to mention rewriting history.
 - The dependency is pinned to the commit behind `v2.11.0`. SkillSpector is not on PyPI, so it installs from a git URL, and a tag can be moved where a commit cannot.
 - Only the Codex copies of the skills are scanned. `tools/generate` renders every harness from the canonical `.claude/commands/` sources and the `generated-files-in-sync` hook proves they match, so the bodies are byte-identical and scanning four copies would buy three more runs and nothing else.
-- `agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
+- `plugins/explore-agent/agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
 
 To run it by hand:
 

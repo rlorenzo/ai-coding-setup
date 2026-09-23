@@ -597,7 +597,7 @@ claude_plugin_supported() {
 # install_commands.
 list_claude_copies() {
     local src dest base
-    for src in .claude/commands/*.md agents/*.md; do
+    for src in .claude/commands/*.md plugins/explore-agent/agents/*.md; do
         [[ -f "$src" ]] || continue
         base=$(basename "$src")
         case "$src" in
@@ -630,6 +630,104 @@ prune_claude_copies() {
     done
 }
 
+# ---- the Explore subagent, two ways ----------------------------------------
+#
+# Both pin Claude Code's built-in Explore subagent to a cheap model, and they
+# are mutually exclusive: with the agent installed, a spawn resolves to that
+# definition rather than the built-in, and the mod's hook has nothing left to
+# improve.
+#
+#   explore-agent  a user-level agent file that shadows the built-in. Works
+#                  everywhere, and costs a CLAUDE.md and user-memory load on
+#                  every search, which the built-in skips for speed.
+#   explore-model  an agent.spawn function hook that sets the model and leaves
+#                  the built-in definition in place, so there is no shadow and
+#                  no extra load. Needs function hooks, which are early access
+#                  and off unless CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1.
+CLAUDE_FUNCTION_HOOKS_ENV="CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"
+CLAUDE_EXPLORE_AGENT="explore-agent"
+CLAUDE_EXPLORE_MOD="explore-model"
+
+# The mod's manifest defaults, passed explicitly so the install does not report
+# them as unset options.
+CLAUDE_EXPLORE_MOD_CONFIG=(--config "model=haiku" --config "agents=Explore"
+    --config "notice=false")
+
+claude_plugin_installed() {
+    claude plugin list 2>/dev/null | grep -qE "^[[:space:]]*> $1@"
+}
+
+# Removes the other route, but only when it is actually installed: an
+# uninstall of something absent prints a failure and still exits 0, which
+# would read as a real error in the middle of a successful run.
+claude_plugin_drop() {
+    claude_plugin_installed "$1" || return 0
+    if claude plugin uninstall "$1" &>/dev/null; then
+        print_info "Removed $1, which $2 supersedes"
+    fi
+}
+
+claude_function_hooks_enabled() {
+    local settings_file="$HOME/.claude/settings.json"
+    [[ -f "$settings_file" ]] || return 1
+    jq -e --arg k "$CLAUDE_FUNCTION_HOOKS_ENV" \
+        '(.env[$k] // "") == "1"' "$settings_file" &>/dev/null
+}
+
+# Writes the flag into settings.json rather than asking the user to export it,
+# so it survives a new terminal. Returns 1 when the file is unusable, so the
+# caller falls back to the agent rather than installing a mod that never loads.
+enable_claude_function_hooks() {
+    local settings_file="$HOME/.claude/settings.json" updated
+    mkdir -p "$HOME/.claude"
+    [[ -f "$settings_file" ]] || echo '{}' > "$settings_file"
+    if ! jq empty "$settings_file" 2>/dev/null; then
+        print_warning "$settings_file is not valid JSON, leaving it alone"
+        return 1
+    fi
+    updated=$(jq --arg k "$CLAUDE_FUNCTION_HOOKS_ENV" \
+        '.env = ((.env // {}) + {($k): "1"})' "$settings_file") || return 1
+    printf '%s\n' "$updated" > "$settings_file"
+    print_success "Set $CLAUDE_FUNCTION_HOOKS_ENV=1 in settings.json"
+}
+
+# Installs whichever Explore route this session can actually run, and removes
+# the other.
+install_claude_explore() {
+    echo ""
+    echo -e "  ${BOLD}Explore subagent${NC}"
+
+    if ! claude_function_hooks_enabled; then
+        echo "  The $CLAUDE_EXPLORE_MOD mod pins Explore's model without shadowing"
+        echo "  the built-in agent, which saves a CLAUDE.md load on every search."
+        echo -e "  ${DIM}It needs function hooks: early access, and the API can change${NC}"
+        echo -e "  ${DIM}between releases. Declining installs the agent file instead.${NC}"
+        if ! prompt_yes_no "  Enable function hooks and install the mod?" n \
+            || ! enable_claude_function_hooks; then
+            claude_explore_switch "$CLAUDE_EXPLORE_AGENT" "$CLAUDE_EXPLORE_MOD"
+            return
+        fi
+    fi
+
+    claude_explore_switch "$CLAUDE_EXPLORE_MOD" "$CLAUDE_EXPLORE_AGENT" \
+        "${CLAUDE_EXPLORE_MOD_CONFIG[@]}"
+}
+
+# Installs one Explore route and only then drops the other, so a failed
+# install leaves the working route in place rather than neither.
+#   $1: route to install  $2: route it replaces  $3...: extra install args
+claude_explore_switch() {
+    local want="$1" other="$2"
+    shift 2
+    if claude plugin install "${want}@${CLAUDE_MARKETPLACE_NAME}" \
+        --scope user --yes "$@"; then
+        print_success "Installed $want"
+        claude_plugin_drop "$other" "$want"
+    else
+        print_error "Could not install $want; kept $other if it was installed"
+    fi
+}
+
 # Returns 0 when the plugin is installed and the caller should skip the copies,
 # 1 when the CLI is too old or the user declined.
 install_claude_plugin() {
@@ -641,8 +739,8 @@ install_claude_plugin() {
         return 1
     fi
 
-    echo "  Installs the commands and the Explore agent as the"
-    echo "  ${CLAUDE_PLUGIN_NAME} plugin, loaded from $PWD."
+    echo "  Installs the commands as the ${CLAUDE_PLUGIN_NAME} plugin,"
+    echo "  loaded from $PWD, then asks how to install Explore."
     echo -e "  ${DIM}git pull then updates them; no files are copied into ~/.claude${NC}"
     if ! prompt_yes_no "  Install as a plugin?"; then
         print_info "Skipped; copying the command files instead"
@@ -660,6 +758,7 @@ install_claude_plugin() {
     fi
 
     print_success "Installed the ${CLAUDE_PLUGIN_NAME} plugin"
+    install_claude_explore
     prune_claude_copies
     return 0
 }
@@ -1596,14 +1695,14 @@ fi
 for tool in "${selected_tools[@]}"; do
     case "$tool" in
         claude)
-            # The plugin carries both the commands and the agent, so the copies
-            # only run when it is unavailable or declined.
+            # The plugins carry both the commands and the agent, so the copies
+            # only run when the plugin route is unavailable or declined.
             if ! install_claude_plugin; then
                 install_commands "Claude Code" \
                     ".claude/commands" "$HOME/.claude/commands" \
                     "file:md" "$MD_MARKER" "/" "get_md_description"
                 install_commands "Claude Code Agents" \
-                    "agents" "$HOME/.claude/agents" \
+                    "plugins/explore-agent/agents" "$HOME/.claude/agents" \
                     "file:md" "$MD_MARKER" "" "get_md_description"
             fi
             configure_claude_settings

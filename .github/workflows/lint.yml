@@ -23,6 +23,31 @@ jobs:
           python-version: "3.12"
       - uses: pre-commit/action@v3.0.1
 
+  # The mods are function-hook plugins: TypeScript loaded into the Claude Code
+  # engine, so neither shellcheck nor BATS can say anything about them. Their
+  # own tests run in a child of the claude binary against a mock engine, which
+  # needs no credentials and no home directory, so a plain npm install is the
+  # whole setup. test/plugin-manifest.bats runs the same command locally and
+  # skips where claude is absent; this job is what actually gates a PR.
+  mods:
+    name: Function-hook mod tests
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run each mod's tests
+        run: |
+          for mod in mods/*/; do
+            echo "== $mod"
+            claude plugin test "$mod"
+          done
+
   # The scripts here are Bash, but they run under Git Bash on Windows too, and
   # bin/review-gate in particular has to cope with the `C:\...` paths and the
   # separate PowerShell tool a Windows harness hands it. Only the test suite

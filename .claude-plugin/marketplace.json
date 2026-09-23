@@ -10,9 +10,39 @@
     {
       "name": "ai-coding-setup",
       "source": ".",
-      "description": "The review and git workflow commands: /commitmsg, /code-review, /code-refinement, /dependency-review, /review-pr, /git-history-cleanup and /efficient-orchestration, plus the Explore subagent.",
+      "description": "The review and git workflow commands: /commitmsg, /code-review, /code-refinement, /dependency-review, /review-pr, /git-history-cleanup and /efficient-orchestration.",
       "category": "code-quality",
-      "keywords": ["code-review", "commit-message", "dependency-review", "git", "pull-request"]
+      "keywords": [
+        "code-review",
+        "commit-message",
+        "dependency-review",
+        "git",
+        "pull-request"
+      ]
+    },
+    {
+      "name": "explore-agent",
+      "source": "./plugins/explore-agent",
+      "description": "The Explore subagent pinned to haiku by a shadowing agent definition. For sessions without function hooks; explore-model supersedes it where those are on. Installing both gives you neither's benefit.",
+      "category": "productivity",
+      "keywords": [
+        "cost",
+        "subagent",
+        "model",
+        "explore"
+      ]
+    },
+    {
+      "name": "explore-model",
+      "source": "./mods/explore-model",
+      "description": "An agent.spawn function hook that pins the Explore subagent to a cheap model, so background codebase searches stop billing at the main session's tier. Needs CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1.",
+      "category": "productivity",
+      "keywords": [
+        "cost",
+        "subagent",
+        "model",
+        "explore"
+      ]
     }
   ]
 }
