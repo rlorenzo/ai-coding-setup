@@ -694,8 +694,6 @@ enable_claude_function_hooks() {
 # Installs whichever Explore route this session can actually run, and removes
 # the other.
 install_claude_explore() {
-    local marketplace="$CLAUDE_MARKETPLACE_NAME"
-
     echo ""
     echo -e "  ${BOLD}Explore subagent${NC}"
 
@@ -706,20 +704,27 @@ install_claude_explore() {
         echo -e "  ${DIM}between releases. Declining installs the agent file instead.${NC}"
         if ! prompt_yes_no "  Enable function hooks and install the mod?" n \
             || ! enable_claude_function_hooks; then
-            claude_plugin_drop "$CLAUDE_EXPLORE_MOD" "$CLAUDE_EXPLORE_AGENT"
-            claude plugin install "${CLAUDE_EXPLORE_AGENT}@${marketplace}" \
-                --scope user --yes \
-                && print_success "Installed $CLAUDE_EXPLORE_AGENT"
+            claude_explore_switch "$CLAUDE_EXPLORE_AGENT" "$CLAUDE_EXPLORE_MOD"
             return
         fi
     fi
 
-    claude_plugin_drop "$CLAUDE_EXPLORE_AGENT" "$CLAUDE_EXPLORE_MOD"
-    if claude plugin install "${CLAUDE_EXPLORE_MOD}@${marketplace}" \
-        --scope user --yes "${CLAUDE_EXPLORE_MOD_CONFIG[@]}"; then
-        print_success "Installed $CLAUDE_EXPLORE_MOD"
+    claude_explore_switch "$CLAUDE_EXPLORE_MOD" "$CLAUDE_EXPLORE_AGENT" \
+        "${CLAUDE_EXPLORE_MOD_CONFIG[@]}"
+}
+
+# Installs one Explore route and only then drops the other, so a failed
+# install leaves the working route in place rather than neither.
+#   $1: route to install  $2: route it replaces  $3...: extra install args
+claude_explore_switch() {
+    local want="$1" other="$2"
+    shift 2
+    if claude plugin install "${want}@${CLAUDE_MARKETPLACE_NAME}" \
+        --scope user --yes "$@"; then
+        print_success "Installed $want"
+        claude_plugin_drop "$other" "$want"
     else
-        print_error "Could not install $CLAUDE_EXPLORE_MOD"
+        print_error "Could not install $want; kept $other if it was installed"
     fi
 }
 
