@@ -48,9 +48,11 @@ async function locate(
     return named
   }
 
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  // An empty HOME is as good as none: fall through to USERPROFILE rather than
+  // probing /.local/bin at the filesystem root.
+  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
 
-  if (home !== undefined && (await $.fs.exists(`${home}${INSTALLED}`))) {
+  if (home && (await $.fs.exists(`${home}${INSTALLED}`))) {
     return `${home}${INSTALLED}`
   }
 

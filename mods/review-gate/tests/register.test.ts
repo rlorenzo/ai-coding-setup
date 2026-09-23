@@ -211,4 +211,22 @@ describe('register', () => {
 
     expect(looked).toEqual([INSTALLED])
   })
+
+  test('an empty HOME falls through to USERPROFILE', async ($, on) => {
+    const looked: string[] = []
+
+    mock.env(on, { HOME: '', USERPROFILE: '/home/dev' })
+    on('fs.exists', ($, e) => {
+      looked.push(e.path)
+
+      return { value: e.path === INSTALLED }
+    })
+    on('session.cwd', () => ({ value: '/repo' }))
+    on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+    on('tool.check', () => ({ decision: 'allow' }))
+
+    await $.tool.check(check('git commit -m one'))
+
+    expect(looked).toEqual([INSTALLED])
+  })
 })
