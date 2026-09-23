@@ -247,3 +247,13 @@ run_remove_gate() {
     assert_success
     assert_equal "$(jq -c '[.hooks.PreToolUse[].matcher]' "$HOME/.claude/settings.json")" '["Edit"]'
 }
+
+@test "gatehook: a hook that only mentions review-gate is not the gate" {
+    seed_settings '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[
+        {"type":"command","command":"\"/home/u/.local/bin/review-gate\" --format=claude"},
+        {"type":"command","command":"my-review-gate"},
+        {"type":"command","command":"echo review-gate"}]}]}}'
+    run_remove_gate
+    assert_success
+    assert_equal "$(jq -c '[.hooks.PreToolUse[].hooks[].command]' "$HOME/.claude/settings.json")" '["my-review-gate","echo review-gate"]'
+}

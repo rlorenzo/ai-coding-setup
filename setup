@@ -1424,21 +1424,26 @@ install_scripts() {
 # in bin/review-gate either way, so the two cannot disagree.
 CLAUDE_REVIEW_GATE_MOD="review-gate"
 
+# A jq def naming the classic hook: a command whose executable, quoted or not,
+# is review-gate. Matching the executable rather than the substring keeps a
+# user's own my-review-gate, or an echo that mentions it, out of reach.
+REVIEW_GATE_JQ_DEF='def is_gate: test("^\\s*\"?([^\"]*[/\\\\])?review-gate\"?(\\s|$)");'
+
 # Drops the classic PreToolUse entry. With the mod loaded it would run the
 # script a second time for the same commit, and issue a second single-use nonce
 # that invalidates the first.
 remove_classic_review_gate_hook() {
     local settings_file="$HOME/.claude/settings.json" updated
     [[ -f "$settings_file" ]] || return 0
-    jq -e '[.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""]
-           | any(test("review-gate"))' "$settings_file" &>/dev/null || return 0
+    jq -e "$REVIEW_GATE_JQ_DEF"'
+           [.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""] | any(is_gate)' "$settings_file" &>/dev/null || return 0
     # Remove only the gate's own hook, not the whole matcher entry: an entry can
     # carry other hooks of the user's alongside it. An entry left with no hooks
     # goes too, and so does PreToolUse once it is empty.
-    updated=$(jq '
+    updated=$(jq "$REVIEW_GATE_JQ_DEF"'
         .hooks.PreToolUse |= (
             map(if .hooks then
-                    .hooks |= map(select(.command // "" | test("review-gate") | not))
+                    .hooks |= map(select(.command // "" | is_gate | not))
                 else . end)
             | map(select(.hooks == null or (.hooks | length) > 0)))
         | if (.hooks.PreToolUse | length) == 0 then del(.hooks.PreToolUse) else . end
@@ -1513,12 +1518,12 @@ configure_review_gate_hook() {
     # means this is already wired. Earlier versions wired the matcher as "Bash"
     # alone, which on Windows misses every commit the agent runs through the
     # separate PowerShell tool, so those entries are widened in place.
-    if jq -e '[.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""]
-              | any(test("review-gate"))' "$settings_file" &>/dev/null; then
+    if jq -e "$REVIEW_GATE_JQ_DEF"'
+              [.hooks.PreToolUse // [] | .[] | .hooks // [] | .[] | .command // ""] | any(is_gate)' "$settings_file" &>/dev/null; then
         local widened
-        widened=$(jq '
+        widened=$(jq "$REVIEW_GATE_JQ_DEF"'
             .hooks.PreToolUse |= map(
-                if ([.hooks // [] | .[] | .command // ""] | any(test("review-gate")))
+                if ([.hooks // [] | .[] | .command // ""] | any(is_gate))
                    and (.matcher == "Bash")
                 then .matcher = "Bash|PowerShell" else . end)' "$settings_file") || widened=""
         if [[ -n "$widened" ]] && ! diff -q <(jq -S . "$settings_file") <(printf '%s\n' "$widened" | jq -S .) &>/dev/null; then
