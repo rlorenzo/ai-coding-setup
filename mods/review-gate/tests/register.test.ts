@@ -3,8 +3,12 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 /**
  * Where `./setup` installs the script, and so where the hook finds it once
  * `mock.env` has said where HOME is.
+ *
+ * Not under /home: on macOS that is an automount, and the engine refuses an
+ * `fs.exists` there as a network location, so every test that looks the
+ * script up would fail on a Mac while passing on Linux CI.
  */
-const INSTALLED = '/home/dev/.local/bin/review-gate'
+const INSTALLED = '/Users/dev/.local/bin/review-gate'
 
 /**
  * The claude-shaped answer the script prints on a block.
@@ -33,7 +37,7 @@ function denied(reason: string) {
 function world(on: Parameters<typeof mock.env>[0], stdout: string) {
   const consulted: string[] = []
 
-  mock.env(on, { HOME: '/home/dev' })
+  mock.env(on, { HOME: '/Users/dev' })
   on('fs.exists', ($, e) => ({ value: e.path === INSTALLED }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', ($, e) => {
@@ -170,7 +174,7 @@ describe('register', () => {
   // Fail open. A hook that refuses a commit because a subprocess would not
   // start enforces nothing and blocks everything.
   test('a script that cannot be run lets the commit through', async ($, on) => {
-    mock.env(on, { HOME: '/home/dev' })
+    mock.env(on, { HOME: '/Users/dev' })
     on('fs.exists', ($, e) => ({ value: e.path === INSTALLED }))
     on('session.cwd', () => ({ value: '/repo' }))
     on('process.run', () => {
@@ -196,7 +200,7 @@ describe('register', () => {
   test('the script is looked for once, not once per commit', async ($, on) => {
     const looked: string[] = []
 
-    mock.env(on, { HOME: '/home/dev' })
+    mock.env(on, { HOME: '/Users/dev' })
     on('fs.exists', ($, e) => {
       looked.push(e.path)
 
@@ -215,7 +219,7 @@ describe('register', () => {
   test('an empty HOME falls through to USERPROFILE', async ($, on) => {
     const looked: string[] = []
 
-    mock.env(on, { HOME: '', USERPROFILE: '/home/dev' })
+    mock.env(on, { HOME: '', USERPROFILE: '/Users/dev' })
     on('fs.exists', ($, e) => {
       looked.push(e.path)
 
