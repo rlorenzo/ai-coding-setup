@@ -150,7 +150,7 @@ attribution() {
     assert_success
     assert_output --partial "default reasoning effort per model"
     assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" \
-        '{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high"}}'
+        '{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"medium"}}'
 }
 
 @test "modelsettings: an existing alias effortLevel is never overwritten" {
@@ -178,7 +178,7 @@ attribution() {
     run_configure y
     assert_success
     assert_equal "$(jq -r '.modelSettings["claude-sonnet-5"].effortLevel' "$HOME/.claude/settings.json")" "low"
-    assert_equal "$(jq -r '.modelSettings.opus.effortLevel' "$HOME/.claude/settings.json")" "high"
+    assert_equal "$(jq -r '.modelSettings.opus.effortLevel' "$HOME/.claude/settings.json")" "medium"
 }
 
 @test "modelsettings: a sibling key such as maxEffortLevel survives the merge" {
@@ -186,7 +186,7 @@ attribution() {
     run_configure y
     assert_success
     assert_equal "$(jq -c '.modelSettings.opus' "$HOME/.claude/settings.json")" \
-        '{"maxEffortLevel":"high","effortLevel":"high"}'
+        '{"maxEffortLevel":"high","effortLevel":"medium"}'
 }
 
 @test "modelsettings: declining leaves modelSettings untouched" {
@@ -195,6 +195,30 @@ attribution() {
     assert_success
     assert_output --partial "default reasoning effort per model"
     assert_equal "$(jq -c '.modelSettings' "$HOME/.claude/settings.json")" '{}'
+}
+
+@test "opuseffort: the previous high default is offered medium" {
+    seed_settings '{"modelSettings":{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high","maxEffortLevel":"max"}}}'
+    run_configure y
+    assert_success
+    assert_output --partial "lower from high to medium"
+    assert_equal "$(jq -c '.modelSettings.opus' "$HOME/.claude/settings.json")" \
+        '{"effortLevel":"medium","maxEffortLevel":"max"}'
+}
+
+@test "opuseffort: any other Opus level is not offered" {
+    seed_settings '{"modelSettings":{"opus":{"effortLevel":"xhigh"}}}'
+    run_configure y
+    assert_success
+    refute_output --partial "Opus effort"
+    assert_equal "$(jq -r '.modelSettings.opus.effortLevel' "$HOME/.claude/settings.json")" "xhigh"
+}
+
+@test "opuseffort: declining keeps high" {
+    seed_settings '{"modelSettings":{"opus":{"effortLevel":"high"}}}'
+    run_configure n
+    assert_success
+    assert_equal "$(jq -r '.modelSettings.opus.effortLevel' "$HOME/.claude/settings.json")" "high"
 }
 
 # ---- subagent model -------------------------------------------------------
