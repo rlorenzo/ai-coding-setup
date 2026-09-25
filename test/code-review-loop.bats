@@ -235,6 +235,7 @@ init_branch_repo() { # init_branch_repo <dir name>
     # stub instead resolves the file path the loop told it about (still
     # present at this point, since the loop's own cleanup trap has not fired
     # yet) and copies it out where the test can inspect it afterward.
+    # shellcheck disable=SC2016
     write_stub_agent '
 diff_file=$(grep -oE "[^[:space:]]*reviewer-scope\.patch" "$STUB_PROMPT_LOG" | tail -1)
 [ -n "$diff_file" ] && [ -f "$diff_file" ] && cp "$diff_file" "$CAPTURED_DIFF"

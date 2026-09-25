@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
 # Unit tests for lib/lib-review-loop: pure library functions.
 # Agent runner tests are in test/smoke (uses real CLI agents).
+#
+# shellcheck disable=SC2030,SC2031
 
 load test_helper
 
