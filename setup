@@ -770,43 +770,28 @@ install_claude_plugin() {
 # shellcheck disable=SC2016
 CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json.tmp" && mv "$HOME/.claude/rate_limits.json.tmp" "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
 
-# Reasoning effort per model. Claude Code reads these from `modelSettings`, so
-# a model keeps its effort level across sessions without an /effort toggle.
-#
-# Keyed by alias, not by a dated model ID: Claude Code resolves the key through
-# the same alias table as `/model`, so "opus" tracks whichever Opus is current
-# and the preference survives the next model release. A dated key like
-# `claude-opus-5` would silently stop applying the day Opus 6 ships.
-#
-# Only list a model whose built-in default we disagree with. Claude Code tunes
-# the default effort per model, and a pin outlives the model it was chosen for:
-# an alias pin carries over when the alias moves to a new model. Fable defaults
-# to high, and medium is the cheaper floor we want. Opus is left to Claude
-# Code, which starts Opus 5.5 at medium.
-CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"}}'
+# Effort pins this script wrote to `modelSettings` in earlier releases, keyed
+# by alias. It no longer pins effort: Claude Code tunes the default per model
+# (Opus 5.5 starts at medium, most others at high), and an alias pin carries
+# over when the alias moves to a new model, so it outlives the model it was
+# chosen for. A config still holding exactly one of these values is offered its
+# removal; any other level is the user's own choice and is left alone.
+CLAUDE_PREVIOUS_EFFORT_PINS='{"opus":"high","fable":"medium"}'
 
-# The Opus effort this script pinned in earlier releases. A config still on it
-# is offered removal, so Opus falls back to Claude Code's per-model default;
-# any other level is the user's own choice.
-CLAUDE_OPUS_PREVIOUS_EFFORT='high'
+# The aliases in $p whose effortLevel still matches what this script pinned.
+# shellcheck disable=SC2016
+CLAUDE_STALE_EFFORT_PINS='(
+    . as $s
+    | [$p | to_entries[]
+        | select(($s.modelSettings[.key].effortLevel // null) == .value) | .key]
+)'
 
 # Default model for subagents. Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL as
 # the fallback tier: an agent definition's `model:` frontmatter and an explicit
 # spawn-time model both still win over it. Sonnet is the mid tier, so routine
 # search and recon stop billing at the main session's tier. Alias, not a dated
-# ID, for the same reason as CLAUDE_MODEL_SETTINGS above.
+# ID, so "sonnet" tracks whichever Sonnet is current.
 CLAUDE_SUBAGENT_MODEL='sonnet'
-
-# The defaults above whose model has no effortLevel in settings.json yet. An
-# existing key counts as that model when it contains the alias, so a hand-written
-# `claude-opus-5`, `opus[1m]` or a Bedrock spelling all mean "opus is already
-# set" and are left alone rather than gaining a second key beside them.
-# shellcheck disable=SC2016
-CLAUDE_MODEL_SETTINGS_MISSING='(
-    [(.modelSettings // {}) | to_entries[]
-        | select(.value.effortLevel != null) | .key | ascii_downcase] as $set
-    | $d | with_entries(select(.key as $k | ($set | any(contains($k))) | not))
-)'
 
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
@@ -858,13 +843,11 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.outputStyle' &>/dev/null; then
         feature_changes+=("outputstyle")
     fi
-    if ! echo "$settings" | jq -e --argjson d "$CLAUDE_MODEL_SETTINGS" \
-        "$CLAUDE_MODEL_SETTINGS_MISSING"' | length == 0' &>/dev/null; then
-        feature_changes+=("modelsettings")
-    fi
-    if echo "$settings" | jq -e --arg e "$CLAUDE_OPUS_PREVIOUS_EFFORT" \
-        '.modelSettings.opus.effortLevel == $e' &>/dev/null; then
-        feature_changes+=("opuseffort")
+    local stale_effort_pins
+    stale_effort_pins=$(echo "$settings" | jq -r --argjson p "$CLAUDE_PREVIOUS_EFFORT_PINS" \
+        "$CLAUDE_STALE_EFFORT_PINS"' | join(", ")' 2>/dev/null)
+    if [[ -n "$stale_effort_pins" ]]; then
+        feature_changes+=("effortpins")
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
@@ -915,8 +898,7 @@ configure_claude_settings() {
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
-                modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium)" ;;
-                opuseffort)  echo -e "  • ${BOLD}Opus effort${NC}: remove the ${CLAUDE_OPUS_PREVIOUS_EFFORT} pin so Opus uses Claude Code's per-model default" ;;
+                effortpins)  echo -e "  • ${BOLD}modelSettings${NC}: remove the effort pins an earlier setup wrote (${stale_effort_pins}) so Claude Code's per-model defaults apply" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
@@ -933,10 +915,11 @@ configure_claude_settings() {
                     subagentmodel) updated=$(echo "$updated" | jq --arg m "$CLAUDE_SUBAGENT_MODEL" \
                                        '.env = ((.env // {}) + {"CLAUDE_CODE_SUBAGENT_MODEL": $m})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
-                    modelsettings) updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
-                                       "$CLAUDE_MODEL_SETTINGS_MISSING"' as $add | .modelSettings = ((.modelSettings // {}) * $add)') ;;
-                    opuseffort)  updated=$(echo "$updated" | jq 'del(.modelSettings.opus.effortLevel)
-                                       | if .modelSettings.opus == {} then del(.modelSettings.opus) else . end') ;;
+                    effortpins)  updated=$(echo "$updated" | jq --argjson p "$CLAUDE_PREVIOUS_EFFORT_PINS" \
+                                       "$CLAUDE_STALE_EFFORT_PINS"' as $stale
+                                       | reduce $stale[] as $k (.; del(.modelSettings[$k].effortLevel)
+                                           | if .modelSettings[$k] == {} then del(.modelSettings[$k]) else . end)
+                                       | if .modelSettings == {} then del(.modelSettings) else . end') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
