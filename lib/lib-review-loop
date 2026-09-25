@@ -147,10 +147,16 @@ validate_positive_int() {
 # prompts (e.g. the final review-loop summary).
 #   $1: prompt text
 #   $2: comma-separated allowed tools (default: Edit,Read,Write,Bash,Grep,Glob)
+#
+# --allowedTools only grants permissions; Bash rules already in the user's or
+# project's settings would still apply.  AGENT_READ_ONLY=1 (reviewer calls)
+# therefore also denies Bash outright.
 run_claude() {
     local prompt="$1"
     local tools="${2:-Edit,Read,Write,Bash,Grep,Glob}"
-    printf '%s' "$prompt" | claude -p --allowedTools "$tools" \
+    local -a flags=(-p --allowedTools "$tools")
+    [[ "${AGENT_READ_ONLY:-}" == 1 ]] && flags+=(--disallowedTools Bash)
+    printf '%s' "$prompt" | claude "${flags[@]}" \
         --strict-mcp-config --mcp-config '{"mcpServers":{}}'
 }
 
@@ -162,7 +168,9 @@ run_claude() {
 # parse error, so the agent never starts and the loop exits with no review.
 # workspace-write is the equivalent policy -- `exec` is already non-interactive,
 # so there are no approvals to auto-accept, only the sandbox to widen far enough
-# that the reviewer can write agent-code-review.md.
+# that the reviewer can write agent-code-review.md.  That makes workspace-write
+# the most restrictive mode the reviewer can run in (read-only cannot write the
+# report); its sandbox also has network access off by default.
 #   $1: prompt text
 run_codex() {
     local prompt="$1"
@@ -191,14 +199,28 @@ $prompt"
 # prompt: prompts/code-review.md and code-review-followup.md forbid running the
 # project and starting background tasks.  Callers must still treat "exit 0, no
 # output file" as a failure.
+#
+# AGENT_READ_ONLY=1 (set by the loops on reviewer calls) adds --sandbox, which
+# confines the shell to the workspace: no reads of $HOME, no writes outside the
+# project (verified on agy 1.2.10).  It does not block network.  Not used for
+# the editor or the summary step, which reads a diff file from the temp dir.
+# The reviewer's own diff file lives in TMPDIR_REVIEW, so that directory is
+# added to the sandboxed workspace.
 #   $1: prompt text
 run_antigravity() {
     local prompt="$1"
-    printf '%s' "$prompt" | agy --dangerously-skip-permissions --add-dir "$PWD" --print-timeout 30m
+    local -a flags=(--dangerously-skip-permissions --add-dir "$PWD" --print-timeout 30m)
+    if [[ "${AGENT_READ_ONLY:-}" == 1 ]]; then
+        flags+=(--sandbox)
+        [[ -n "${TMPDIR_REVIEW:-}" ]] && flags+=(--add-dir "$TMPDIR_REVIEW")
+    fi
+    printf '%s' "$prompt" | agy "${flags[@]}"
 }
 
 # Run Copilot CLI with a prompt in non-interactive autonomous mode.
 # Uses --autopilot for multi-step execution and --yolo for auto-approval.
+# The reviewer gets the same approvals as the editor: Copilot's per-tool
+# --allow-tool rules could narrow it, but they are untested here.
 # Disables MCP servers to keep autonomous runs scoped to local review work.
 #
 # KNOWN LIMITATION: the prompt is passed as an argv, which on Windows/MSYS
@@ -223,6 +245,7 @@ run_copilot() {
 # Run Kimi Code CLI with a prompt in non-interactive mode.
 # `-p` is already fully unattended: kimi rejects --yolo/--auto alongside
 # --prompt because non-interactive runs use auto permission mode by default.
+# There is no read-only or sandbox flag, so the reviewer runs unrestricted.
 #
 # KNOWN LIMITATION: as with Copilot, the prompt is passed as an argv. kimi's
 # -p takes the prompt as a flag value and has no stdin form, so on Windows/MSYS

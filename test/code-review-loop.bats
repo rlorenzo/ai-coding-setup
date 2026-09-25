@@ -155,6 +155,18 @@ run_loop_with_logs() { # run_loop_with_logs <CODE_REVIEW_LOOP_LOG_DIR value> <ab
     assert_failure
 }
 
+@test "the reviewer has no shell at all" {
+    run_loop_with_logs "$BATS_TEST_TMPDIR/repo/tools" "$BATS_TEST_TMPDIR/repo/tools"
+    local review
+    review=$(find "$log_root" -name '3-review-initial.*.log' -type f)
+    [ -n "$review" ]
+
+    # Neither bare Bash nor a git-command allowlist (e.g. Bash(git diff *)),
+    # which still permits write-capable arguments to those commands.
+    run grep -q 'tools=.*Bash' "$review"
+    assert_failure
+}
+
 # =========================================================================
 # Self-edit resilience
 #
@@ -214,19 +226,32 @@ init_branch_repo() { # init_branch_repo <dir name>
     assert_output --partial "No changes to review"
 }
 
-@test "--branch reviews the branch's commits and tells agents the diff command" {
+@test "--branch reviews the branch's commits and hands the reviewer a scoped diff file" {
     init_branch_repo repo
     # Keep the prompts the stub is given, so the scope note is observable.
     export STUB_PROMPT_LOG="$BATS_TEST_TMPDIR/prompts.txt"
-    write_stub_agent
+    export CAPTURED_DIFF="$BATS_TEST_TMPDIR/captured-diff.txt"
+    # The reviewer has no shell, so it cannot run the diff command itself; the
+    # stub instead resolves the file path the loop told it about (still
+    # present at this point, since the loop's own cleanup trap has not fired
+    # yet) and copies it out where the test can inspect it afterward.
+    write_stub_agent '
+diff_file=$(grep -oE "[^[:space:]]*reviewer-scope\.patch" "$STUB_PROMPT_LOG" | tail -1)
+[ -n "$diff_file" ] && [ -f "$diff_file" ] && cp "$diff_file" "$CAPTURED_DIFF"
+'
     use_checkout_prompts
     run "$BIN" -s -m 1 -e claude -r claude --branch main
     assert_success
     assert_output --partial "Scope          : branch since main"
     assert_output --partial "Review Loop Complete"
-    local mb
-    mb=$(git merge-base main HEAD)
-    grep -q "git diff --staged $mb" "$BATS_TEST_TMPDIR/prompts.txt"
+    # The base prompt still describes `git diff --staged` for reviewers that
+    # do have a shell; what matters for a shell-less reviewer is the override
+    # naming the actual file to read instead.
+    grep -q "SCOPE: the diff under review is saved at" "$BATS_TEST_TMPDIR/prompts.txt"
+    # The file it was pointed at actually holds the branch's commit, not just
+    # whatever (empty) index diff `git diff --staged` alone would show.
+    [ -f "$CAPTURED_DIFF" ]
+    grep -q "^+changed$" "$CAPTURED_DIFF"
     # Fixes stay staged, never committed.
     [ "$(git rev-list --count main..HEAD)" -eq 1 ]
 }

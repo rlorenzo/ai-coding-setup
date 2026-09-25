@@ -23,11 +23,16 @@ FORCE=false
 # Only commands that have NO write/destructive mode, even with flags.
 # Excluded: find (-delete), sed (-i), awk (print>"file"), gh api (POST/DELETE),
 #           git branch/tag/stash/remote (destructive subcommands).
+# Also excluded: anything that reaches an arbitrary host (bare WebFetch,
+# WebSearch, git ls-remote). cat/head/grep below read any path, not just the
+# project, so pairing them with prompt-free network access would let injected
+# instructions read a secret and send it out without a single prompt. Add
+# scoped entries like WebFetch(domain:docs.example.com) by hand instead.
 
 READONLY_COMMANDS=(
     # Git read-only
     "git status" "git log" "git diff" "git show" "git blame"
-    "git ls-files" "git ls-tree" "git ls-remote"
+    "git ls-files" "git ls-tree"
     "git rev-parse" "git cat-file" "git shortlog" "git describe"
     # GitHub CLI read-only
     "gh pr view" "gh pr list" "gh pr diff" "gh pr checks" "gh pr status"
@@ -58,9 +63,15 @@ done
 # ---- MCP server definitions ------------------------------------------------
 # Format: "name|command|arg1,arg2,...|permission_pattern"
 # To add a new MCP server, append an entry here.
+# Versions are pinned, not @latest: a server runs at every agent start with its
+# tools pre-approved, so a new release should be a deliberate bump.
 MCP_SERVERS=(
-    "playwright|npx|@playwright/mcp@latest|mcp__playwright__*"
+    "playwright|npx|@playwright/mcp@0.0.82|mcp__playwright__*"
 )
+
+# Pinned for the same reason: its installer writes hooks into ~/.claude and
+# ~/.codex. Bump deliberately.
+IMPECCABLE_PKG="impeccable@4.1.0"
 
 # ---- helpers --------------------------------------------------------------
 
@@ -821,12 +832,6 @@ configure_claude_settings() {
     # ── Check feature settings ──────────────────────────────────
     local feature_changes=()
 
-    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebFetch")' &>/dev/null; then
-        feature_changes+=("webfetch")
-    fi
-    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebSearch")' &>/dev/null; then
-        feature_changes+=("websearch")
-    fi
     # Offer the change when attribution is unset, or when a prior run set
     # commit/pr blank before sessionUrl existed (migrate by adding sessionUrl).
     if echo "$settings" | jq -e '
@@ -894,8 +899,6 @@ configure_claude_settings() {
         echo ""
         for change in "${feature_changes[@]}"; do
             case "$change" in
-                webfetch)    echo -e "  • ${BOLD}WebFetch${NC}: allow web page fetching without prompting" ;;
-                websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
@@ -910,8 +913,6 @@ configure_claude_settings() {
         if prompt_yes_no "  Apply these settings?"; then
             for change in "${feature_changes[@]}"; do
                 case "$change" in
-                    webfetch)    updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebFetch"])') ;;
-                    websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
                     subagentmodel) updated=$(echo "$updated" | jq --arg m "$CLAUDE_SUBAGENT_MODEL" \
@@ -1268,16 +1269,16 @@ configure_impeccable_skills() {
     echo "  Install or update the Impeccable design skills (https://impeccable.style)?"
     echo "  A shared design vocabulary and commands for your agent: typography,"
     echo "  color, motion, layout, polish, and AI-slop detection."
-    echo "  Runs via npx (always the latest), so re-running refreshes an existing"
+    echo "  Runs via npx at a pinned version, so re-running refreshes an existing"
     echo "  install and adds any newly-selected agents:"
-    echo "    npx impeccable install --providers=${providers} --scope=global"
+    echo "    npx ${IMPECCABLE_PKG} install --providers=${providers} --scope=global"
     echo ""
     if prompt_yes_no "  Install/update Impeccable skills?"; then
         if ! command -v npx &>/dev/null; then
             print_warning "npx not found; install Node.js to use Impeccable skills"
             return
         fi
-        if npx impeccable install --providers="$providers" --scope=global; then
+        if npx "$IMPECCABLE_PKG" install --providers="$providers" --scope=global; then
             print_success "Installed/updated Impeccable skills for: ${providers}"
         else
             print_warning "Impeccable install failed; see output above"

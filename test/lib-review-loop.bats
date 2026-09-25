@@ -663,3 +663,47 @@ stub_codex() { # records the argv it was invoked with, then succeeds
     # by the hyphens in --sandbox, so it would pass with the "-" removed.
     assert_line "-"
 }
+
+@test "run_antigravity sandboxes only read-only calls" {
+    source_lib
+    mkdir -p "$TEST_TMPDIR/stub"
+    printf '#!/usr/bin/env bash\ncat >/dev/null\necho "$*"\n' > "$TEST_TMPDIR/stub/agy"
+    chmod +x "$TEST_TMPDIR/stub/agy"
+    PATH="$TEST_TMPDIR/stub:$PATH"
+
+    run run_antigravity "p"
+    assert_success
+    refute_output --partial -- "--sandbox"
+
+    AGENT_READ_ONLY=1 run run_antigravity "p"
+    assert_success
+    assert_output --partial -- "--sandbox"
+}
+
+@test "run_antigravity adds the reviewer's temp dir to the sandbox" {
+    source_lib
+    mkdir -p "$TEST_TMPDIR/stub"
+    printf '#!/usr/bin/env bash\ncat >/dev/null\necho "$*"\n' > "$TEST_TMPDIR/stub/agy"
+    chmod +x "$TEST_TMPDIR/stub/agy"
+    PATH="$TEST_TMPDIR/stub:$PATH"
+
+    TMPDIR_REVIEW="$TEST_TMPDIR/review" AGENT_READ_ONLY=1 run run_antigravity "p"
+    assert_success
+    assert_output --partial -- "--add-dir $TEST_TMPDIR/review"
+}
+
+@test "run_claude denies Bash only on read-only calls" {
+    source_lib
+    mkdir -p "$TEST_TMPDIR/stub"
+    printf '#!/usr/bin/env bash\ncat >/dev/null\necho "$*"\n' > "$TEST_TMPDIR/stub/claude"
+    chmod +x "$TEST_TMPDIR/stub/claude"
+    PATH="$TEST_TMPDIR/stub:$PATH"
+
+    run run_claude "p" "Read"
+    assert_success
+    refute_output --partial -- "--disallowedTools"
+
+    AGENT_READ_ONLY=1 run run_claude "p" "Read"
+    assert_success
+    assert_output --partial -- "--disallowedTools Bash"
+}

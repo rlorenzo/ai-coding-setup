@@ -453,6 +453,19 @@ Environment variables:
 | `AI_REVIEW_HEADLESS` | unset | `1` degrades the gate to warn-only. `code-review-loop` sets it for its own run. |
 | `REVIEW_GATE_LOCK_MAX_AGE` | `21600` | Seconds before the gate stops trusting a `code-review-loop` lock file and prunes it. |
 
+### Trust model
+
+The loops run every agent with approval prompts off, over your checkout. The editor has unrestricted shell access by design, since it has to run linters and tests. Anything in the repository the agents read, including the diff, `CLAUDE.md`/`AGENTS.md`, and code comments, can carry instructions they may follow. A malicious repo can therefore run code as you, with your home directory and network. **Only run the loops on repositories you already trust**, never on a fresh clone of someone else's code.
+
+The reviewer is narrower where the CLI allows it:
+
+| Reviewer | Restriction |
+| --- | --- |
+| `claude` | No shell at all. The loop writes the diff to a file and hands the reviewer its path, since a git-command allowlist still permits write-capable arguments (e.g. `git diff --output=file`) and can't make Bash read-only. |
+| `codex` | `--sandbox workspace-write`, the tightest mode that can still write the report. Network is off in that sandbox. |
+| `antigravity` | `--sandbox`: no reads of your home directory and no writes outside the project. Network stays on. A plan file outside the project directory cannot be read by a sandboxed reviewer. |
+| `copilot`, `kimi` | None. Both run with full approvals. |
+
 ### Shared prompts
 
 Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not interactive commands. They're listed here so you can audit or tweak the behavior:
@@ -471,6 +484,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 - Each AI tool has its own command format, but the content is maintained once: `.claude/commands/*.md` files are the canonical sources, and `tools/generate` derives the Codex/Copilot/Antigravity/Kimi `SKILL.md` files and the shared loop prompts from them. A pre-commit/CI check (`tools/generate --check`) fails if the derived files drift from their sources.
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
+- The Claude Code settings step offers a set of read-only permissions (`git status`, `cat`, `grep`, and similar). The file readers match any path, not just the project, so the set deliberately leaves out `WebFetch`, `WebSearch` and `git ls-remote`: read-anywhere plus fetch-anywhere lets an injected instruction read a secret and send it out without a prompt. To skip the prompt for docs you fetch often, add scoped rules such as `WebFetch(domain:docs.example.com)` to `permissions.allow` in `~/.claude/settings.json`. Earlier versions of `setup` added bare `WebFetch` and `WebSearch`; remove them by hand if you want the tighter default.
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
 - On each run the script also offers to prune stale installs: any command it previously installed (identified by that same marker) that no longer exists in the repo can be removed, so renamed or deleted commands clean themselves up. It asks before each removal (default No, so nothing is dropped without your say-so), or pass `--force` to prune without prompting. Your own unmarked commands are never touched.
 
@@ -480,7 +494,7 @@ The setup script can configure [Model Context Protocol (MCP)](https://modelconte
 
 | Server | Package | Description |
 | --- | --- | --- |
-| [Playwright](https://github.com/microsoft/playwright-mcp) | `@playwright/mcp@latest` | Browser automation and web testing |
+| [Playwright](https://github.com/microsoft/playwright-mcp) | `@playwright/mcp@0.0.82` | Browser automation and web testing |
 
 MCP servers are added via each tool's `mcp add` CLI command at user scope. Tools without one (Copilot, Antigravity, Kimi Code) get their JSON config file edited directly; for Kimi that is `~/.kimi-code/mcp.json`, whose only built-in editor is the interactive `/mcp-config` TUI command.
 
@@ -541,10 +555,10 @@ gh stack merge         # merge one or more PRs, bottom-up
 For the selected tools it supports (Claude Code, Codex CLI, Copilot CLI), `setup` offers to run one command covering them all:
 
 ```bash
-npx impeccable install --providers=claude,codex,github --scope=global
+npx impeccable@4.1.0 install --providers=claude,codex,github --scope=global
 ```
 
-Because it runs via `npx` (always the latest) with explicit `--providers`/`--scope`, re-running `setup` and accepting this step refreshes an existing install and adds any newly-selected agents. There is no separate detect-and-update branch (unlike the `gh` skill above), since `install` with explicit providers is already idempotent and provider-aware.
+The version is pinned in `setup` (`IMPECCABLE_PKG`) because the installer writes hooks into `~/.claude` and `~/.codex`; bump it deliberately. Because it runs via `npx` with explicit `--providers`/`--scope`, re-running `setup` and accepting this step refreshes an existing install and adds any newly-selected agents. There is no separate detect-and-update branch (unlike the `gh` skill above), since `install` with explicit providers is already idempotent and provider-aware.
 
 Antigravity CLI and Kimi Code CLI have no Impeccable provider, so they are skipped. This step needs `npx` (Node.js). To manage Impeccable yourself:
 

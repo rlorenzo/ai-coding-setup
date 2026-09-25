@@ -14,6 +14,14 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+# ---- read the whole script before running any of it -----------------------
+# Bash reads a script incrementally by byte offset, and setup installs this
+# file as a symlink into the clone, so an editor agent run inside this repo can
+# rewrite it mid-run.  A brace group forces a full parse up front.  The `exit`
+# before the closing brace is load-bearing: without it bash resumes reading
+# after the group, at the stale offset.
+{
+
 # ---- load shared library --------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/lib-review-loop
@@ -153,7 +161,7 @@ pre_snapshot="$TMPDIR_REVIEW/pre-review-initial.txt"
 snapshot_untracked > "$pre_snapshot"
 
 local_exit=0
-run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
+AGENT_READ_ONLY=1 run_agent "$REVIEWER_AGENT" "$review_task" "$REVIEWER_TOOLS" || local_exit=$?
 cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
 if [[ $local_exit -ne 0 ]]; then
@@ -233,7 +241,7 @@ IMPORTANT: Write ALL output (feedback or NO_FURTHER_FEEDBACK) to the file feedba
     snapshot_untracked > "$pre_snapshot"
 
     local_exit=0
-    run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
+    AGENT_READ_ONLY=1 run_agent "$REVIEWER_AGENT" "$followup_task" "$REVIEWER_TOOLS" || local_exit=$?
     cleanup_agent_artifacts "$REVIEWER_AGENT" "$pre_snapshot" "reviewer"
 
     if [[ $local_exit -ne 0 ]]; then
@@ -362,3 +370,6 @@ else
 fi
 echo ""
 echo -e "${CYAN}Review the improved plan and summary.${NC}"
+
+exit
+}
