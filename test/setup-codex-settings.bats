@@ -49,9 +49,9 @@ agents_headers() {
     seed_config 'model = "gpt-6-astra"'
     run_configure y
     assert_success
-    assert_output --partial "run subagents on gpt-5.6-terra at medium effort"
+    assert_output --partial "run subagents on gpt-6-sol at medium effort"
     assert_equal "$(agents_headers)" "1"
-    config | grep -q 'default_subagent_model = "gpt-5.6-terra"'
+    config | grep -q 'default_subagent_model = "gpt-6-sol"'
     config | grep -q 'default_subagent_reasoning_effort = "medium"'
 }
 
@@ -70,7 +70,7 @@ some_other_key = 1'
     run_configure y
     assert_success
     assert_equal "$(agents_headers)" "1"
-    config | grep -q 'default_subagent_model = "gpt-5.6-terra"'
+    config | grep -q 'default_subagent_model = "gpt-6-sol"'
     config | grep -q '^some_other_key = 1$'
 }
 
@@ -91,7 +91,7 @@ default_subagent_model = "gpt-5.6-luna"'
 default_subagent_model = "gpt-5.6-luna"'
     run_configure y
     config | grep -q 'default_subagent_model = "gpt-5.6-luna"'
-    refute_line --partial 'default_subagent_model = "gpt-5.6-terra"'
+    refute_line --partial 'default_subagent_model = "gpt-6-sol"'
 }
 
 @test "subagent defaults: declining leaves config.toml untouched" {
@@ -99,4 +99,29 @@ default_subagent_model = "gpt-5.6-luna"'
     run_configure n
     assert_success
     assert_equal "$(config)" 'model = "gpt-6-astra"'
+}
+
+# ---- upgrade --------------------------------------------------------------
+
+@test "subagent defaults: a previously pinned default is offered the upgrade" {
+    seed_config '[features]
+multi_agent = true
+
+[agents]
+default_subagent_model = "gpt-5.6-terra"
+default_subagent_reasoning_effort = "medium"'
+    run_configure y
+    assert_success
+    assert_output --partial "upgrade gpt-5.6-terra to gpt-6-sol"
+    config | grep -q '^default_subagent_model = "gpt-6-sol"$'
+    config | grep -q '^default_subagent_reasoning_effort = "medium"$'
+    run config
+    refute_output --partial 'gpt-5.6-terra'
+}
+
+@test "subagent defaults: declining the upgrade keeps the old model" {
+    seed_config '[agents]
+default_subagent_model = "gpt-5.6-terra"'
+    run_configure n
+    config | grep -q '^default_subagent_model = "gpt-5.6-terra"$'
 }
