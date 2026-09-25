@@ -257,3 +257,15 @@ run_remove_gate() {
     assert_success
     assert_equal "$(jq -c '[.hooks.PreToolUse[].hooks[].command]' "$HOME/.claude/settings.json")" '["my-review-gate","echo review-gate"]'
 }
+
+# ---- no prompt-free network access ----------------------------------------
+
+@test "permissions: accepting everything grants no web or remote-git access" {
+    run_configure y
+    assert_success
+    run jq -e '.permissions.allow | index("Bash(cat *)")' "$HOME/.claude/settings.json"
+    assert_success
+    run jq -e '.permissions.allow | map(select(test("^Web|ls-remote"))) | length == 0' \
+        "$HOME/.claude/settings.json"
+    assert_success
+}
