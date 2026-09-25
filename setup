@@ -964,12 +964,17 @@ configure_claude_settings() {
 
 # Default model and reasoning effort for Codex subagents. Codex resolves each
 # from the spawn call, then the agent file, then these [agents] defaults, then
-# the parent session, so this only sets the floor. Terra is the mid-tier
-# workhorse (roughly Sonnet's cost/performance slot); medium is the effort
-# OpenAI recommends for it. Pinned explicitly so a future model default cannot
-# quietly move it.
-CODEX_SUBAGENT_MODEL='gpt-5.6-terra'
+# the parent session, so this only sets the floor. GPT-6 Sol is the mid-tier
+# workhorse (roughly Sonnet's cost/performance slot, priced like the GPT-5.6
+# Terra it replaces); medium keeps the effort we ran Terra at. Pinned
+# explicitly so a future model default cannot quietly move it.
+CODEX_SUBAGENT_MODEL='gpt-6-sol'
 CODEX_SUBAGENT_EFFORT='medium'
+
+# Subagent models this script pinned in earlier releases. A config still on one
+# of these is offered the current default; any other value is the user's own
+# choice and is left alone.
+CODEX_SUBAGENT_PREVIOUS_MODELS=('gpt-5.6-terra')
 
 configure_codex_settings() {
     local config_file="$HOME/.codex/config.toml"
@@ -996,8 +1001,17 @@ configure_codex_settings() {
     fi
 
     # Check for subagent defaults under [agents]
+    local current_subagent_model="" previous
     if ! grep -qE '^default_subagent_model\s*=' "$config_file" 2>/dev/null; then
         changes+=("add_subagent_defaults")
+    else
+        current_subagent_model=$(sed -nE 's/^default_subagent_model[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$config_file" | head -n 1)
+        for previous in "${CODEX_SUBAGENT_PREVIOUS_MODELS[@]}"; do
+            if [[ "$current_subagent_model" == "$previous" ]]; then
+                changes+=("upgrade_subagent_model")
+                break
+            fi
+        done
     fi
 
     if [[ ${#changes[@]} -eq 0 ]]; then
@@ -1013,6 +1027,7 @@ configure_codex_settings() {
             remove_collab)   echo -e "  • ${BOLD}Remove collab${NC}: deprecated, replaced by multi_agent" ;;
             add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC}: enable multi-agent collaboration" ;;
             add_subagent_defaults) echo -e "  • ${BOLD}[agents] defaults${NC}: run subagents on ${CODEX_SUBAGENT_MODEL} at ${CODEX_SUBAGENT_EFFORT} effort instead of inheriting your main model" ;;
+            upgrade_subagent_model) echo -e "  • ${BOLD}Subagent model${NC}: upgrade ${current_subagent_model} to ${CODEX_SUBAGENT_MODEL}" ;;
         esac
     done
     echo ""
@@ -1054,6 +1069,10 @@ multi_agent = true' "$config_file"
                         printf '\n[agents]\ndefault_subagent_model = "%s"\ndefault_subagent_reasoning_effort = "%s"\n' \
                             "$CODEX_SUBAGENT_MODEL" "$CODEX_SUBAGENT_EFFORT" >> "$config_file"
                     fi
+                    ;;
+                upgrade_subagent_model)
+                    sed -i.bak -E "s/^(default_subagent_model[[:space:]]*=[[:space:]]*)\"${current_subagent_model}\"/\\1\"${CODEX_SUBAGENT_MODEL}\"/" "$config_file"
+                    rm -f "${config_file}.bak"
                     ;;
             esac
         done
