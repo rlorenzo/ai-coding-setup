@@ -778,12 +778,16 @@ CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits 
 # and the preference survives the next model release. A dated key like
 # `claude-opus-5` would silently stop applying the day Opus 6 ships.
 #
-# Opus is medium, the default Anthropic set with Opus 5.5 and its recommended
-# starting point; raise it per session with /effort for harder work.
-CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"medium"}}'
+# Only list a model whose built-in default we disagree with. Claude Code tunes
+# the default effort per model, and a pin outlives the model it was chosen for:
+# an alias pin carries over when the alias moves to a new model. Fable defaults
+# to high, and medium is the cheaper floor we want. Opus is left to Claude
+# Code, which starts Opus 5.5 at medium.
+CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"}}'
 
-# The Opus effort this script set in earlier releases. A config still on it is
-# offered the current default; any other level is the user's own choice.
+# The Opus effort this script pinned in earlier releases. A config still on it
+# is offered removal, so Opus falls back to Claude Code's per-model default;
+# any other level is the user's own choice.
 CLAUDE_OPUS_PREVIOUS_EFFORT='high'
 
 # Default model for subagents. Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL as
@@ -911,8 +915,8 @@ configure_claude_settings() {
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
-                modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium, Opus medium)" ;;
-                opuseffort)  echo -e "  • ${BOLD}Opus effort${NC}: lower from ${CLAUDE_OPUS_PREVIOUS_EFFORT} to $(echo "$CLAUDE_MODEL_SETTINGS" | jq -r '.opus.effortLevel'), the current default" ;;
+                modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium)" ;;
+                opuseffort)  echo -e "  • ${BOLD}Opus effort${NC}: remove the ${CLAUDE_OPUS_PREVIOUS_EFFORT} pin so Opus uses Claude Code's per-model default" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
@@ -931,8 +935,8 @@ configure_claude_settings() {
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
                     modelsettings) updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
                                        "$CLAUDE_MODEL_SETTINGS_MISSING"' as $add | .modelSettings = ((.modelSettings // {}) * $add)') ;;
-                    opuseffort)  updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
-                                       '.modelSettings.opus.effortLevel = $d.opus.effortLevel') ;;
+                    opuseffort)  updated=$(echo "$updated" | jq 'del(.modelSettings.opus.effortLevel)
+                                       | if .modelSettings.opus == {} then del(.modelSettings.opus) else . end') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
