@@ -45,7 +45,22 @@ gh api graphql --paginate --slurp \
 
 **Auto-resolve:** first comment body matching an `$IGNORED_FILE` entry (`grep -qxF`) → resolve as `WONT_FIX` (see step 3), no classifying.
 
-Threads remain → step 3. Never re-request a bot while threads are open. Zero unresolved → step 5.
+### 2b. Read review bodies
+
+Review bots also report findings in the review body, with no thread behind them, so zero threads is not a clean review. Fetch each bot's latest review on the head commit:
+
+```bash
+head_sha=$(gh pr view {PR_NUMBER} --json commits --jq '.commits[-1].oid')
+gh api --paginate --slurp repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
+  | jq -r --arg sha "$head_sha" 'add | [.[] | select((.user.login | endswith("[bot]")) and .commit_id == $sha)]
+           | group_by(.user.login) | map(max_by(.submitted_at)) | .[] | "=== \(.user.login)\n\(.body)"'
+```
+
+Every issue a body raises counts, whether it has its own entry or is only named in the summary, and whatever section it sits in (`Previously missed`, `Outside diff range`, `Nitpick`), except ones marked resolved or fixed. A findings count in the body may cover inline comments only. Strip zero-width spaces from cited paths before opening them: `sed $'s/\xe2\x80\x8b//g'` (bash turns the escape into the literal bytes, so any sed matches it). Note each body's verdict for the report.
+
+A body finding has no thread to reply to or resolve. Classify it as in step 3, fix or decline it, then append `body: <path:line or "summary"> <title>` to `$IGNORED_FILE`. Bots repeat findings in every re-review, so skip any already listed there (`grep -qxF`).
+
+Threads or unhandled body findings → step 3. Never re-request a bot while threads are open. Neither → step 5.
 
 ### 3. Classify and resolve
 
@@ -89,7 +104,7 @@ stale=$(latest | grep -v " $head_sha$" | cut -d' ' -f1 | sort -u)
 
 `/reviews` identifies the review bots; CI and deploy bots never appear there. Pipe `--slurp` to `jq`, not `--jq`: under `--paginate` a `--jq` filter runs per page, so `max_by` returns a per-page max and lists a bot twice.
 
-Empty `stale` → success, stop. Otherwise re-trigger each login; bots do not re-review a push on their own.
+Empty `stale` → re-run step 2b: new body findings → step 3, none → success, stop. Otherwise re-trigger each login; bots do not re-review a push on their own.
 
 | Bot | Login | Re-trigger with |
 | --- | --- | --- |
@@ -141,4 +156,4 @@ Both blocks in one shell: `head_sha` and `latest` don't survive separate tool ca
 
 Timeout → name the bots still pending, tell the user to re-run, stop. Success → back to step 2.
 
-Stop at iteration 5. Report: threads resolved, fixes made, threads auto-ignored, threads remaining, CI status.
+Stop at iteration 5. Report: threads resolved, body findings fixed and declined (with reasons), fixes made, threads auto-ignored, threads remaining, CI status, each bot's verdict. A non-approving verdict resting on declined findings is not "ready" until the user accepts the declines.
