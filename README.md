@@ -463,7 +463,7 @@ The reviewer is narrower where the CLI allows it:
 | --- | --- |
 | `claude` | No shell at all. The loop writes the diff to a file and hands the reviewer its path, since a git-command allowlist still permits write-capable arguments (e.g. `git diff --output=file`) and can't make Bash read-only. |
 | `codex` | `--sandbox workspace-write`, the tightest mode that can still write the report. Network is off in that sandbox. |
-| `antigravity` | `--sandbox`: no reads of your home directory and no writes outside the project. Network stays on. A plan file outside the project directory cannot be read by a sandboxed reviewer. |
+| `antigravity` | `--sandbox`: no reads of your home directory. Writes are confined to the project plus the loop's own temp dir (`TMPDIR_REVIEW`), which is added to the sandbox because the reviewer's diff file lives there. Network stays on. A plan file outside the project directory cannot be read by a sandboxed reviewer. |
 | `copilot`, `kimi` | None. Both run with full approvals. |
 
 ### Shared prompts
