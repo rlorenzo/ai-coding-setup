@@ -20,14 +20,23 @@ MD_MARKER="<!-- source: ai-coding-setup -->"
 FORCE=false
 
 # ---- read-only permission sets --------------------------------------------
-# Only commands that have NO write/destructive mode, even with flags.
+# Commands that default to read-only, non-destructive behavior. A few
+# (`git diff`, `git show`) accept an --output=<file> flag that writes a
+# single file; that narrow, opt-in write is left in rather than excluded,
+# but it means "read-only" here is the default, not an absolute guarantee
+# under every flag.
 # Excluded: find (-delete), sed (-i), awk (print>"file"), gh api (POST/DELETE),
 #           git branch/tag/stash/remote (destructive subcommands).
+# Also excluded: anything that reaches an arbitrary host (bare WebFetch,
+# WebSearch, git ls-remote). cat/head/grep below read any path, not just the
+# project, so pairing them with prompt-free network access would let injected
+# instructions read a secret and send it out without a single prompt. Add
+# scoped entries like WebFetch(domain:docs.example.com) by hand instead.
 
 READONLY_COMMANDS=(
     # Git read-only
     "git status" "git log" "git diff" "git show" "git blame"
-    "git ls-files" "git ls-tree" "git ls-remote"
+    "git ls-files" "git ls-tree"
     "git rev-parse" "git cat-file" "git shortlog" "git describe"
     # GitHub CLI read-only
     "gh pr view" "gh pr list" "gh pr diff" "gh pr checks" "gh pr status"
@@ -58,9 +67,15 @@ done
 # ---- MCP server definitions ------------------------------------------------
 # Format: "name|command|arg1,arg2,...|permission_pattern"
 # To add a new MCP server, append an entry here.
+# Versions are pinned, not @latest: a server runs at every agent start with its
+# tools pre-approved, so a new release should be a deliberate bump.
 MCP_SERVERS=(
-    "playwright|npx|@playwright/mcp@latest|mcp__playwright__*"
+    "playwright|npx|@playwright/mcp@0.0.82|mcp__playwright__*"
 )
+
+# Pinned for the same reason: its installer writes hooks into ~/.claude and
+# ~/.codex. Bump deliberately.
+IMPECCABLE_PKG="impeccable@4.1.0"
 
 # ---- helpers --------------------------------------------------------------
 
@@ -770,28 +785,32 @@ install_claude_plugin() {
 # shellcheck disable=SC2016
 CLAUDE_STATUSLINE_CMD='input=$(cat); printf "%s" "$input" | jq -c ".rate_limits // {}" > "$HOME/.claude/rate_limits.json.tmp" && mv "$HOME/.claude/rate_limits.json.tmp" "$HOME/.claude/rate_limits.json"; printf "%s" "$input" | jq -r '"'"'"[\(.model.display_name)] ctx \(.context_window.used_percentage // 0 | floor)%" + (if .rate_limits then " · 5h \(.rate_limits.five_hour.used_percentage // 0 | floor)% · 7d \(.rate_limits.seven_day.used_percentage // 0 | floor)%" else "" end)'"'"''
 
-# Effort pins this script wrote to `modelSettings` in earlier releases, keyed
-# by alias. It no longer pins effort: Claude Code tunes the default per model
-# (Opus 5.5 starts at medium, most others at high), and an alias pin carries
-# over when the alias moves to a new model, so it outlives the model it was
-# chosen for. A config still holding exactly one of these values is offered its
-# removal; any other level is the user's own choice and is left alone.
-CLAUDE_PREVIOUS_EFFORT_PINS='{"opus":"high","fable":"medium"}'
-
-# The aliases in $p whose effortLevel still matches what this script pinned.
-# shellcheck disable=SC2016
-CLAUDE_STALE_EFFORT_PINS='(
-    . as $s
-    | [$p | to_entries[]
-        | select(($s.modelSettings[.key].effortLevel // null) == .value) | .key]
-)'
+# Reasoning effort per model. Claude Code reads these from `modelSettings`, so
+# a model keeps its effort level across sessions without an /effort toggle.
+#
+# Keyed by alias, not by a dated model ID: Claude Code resolves the key through
+# the same alias table as `/model`, so "opus" tracks whichever Opus is current
+# and the preference survives the next model release. A dated key like
+# `claude-opus-5` would silently stop applying the day Opus 6 ships.
+CLAUDE_MODEL_SETTINGS='{"fable":{"effortLevel":"medium"},"opus":{"effortLevel":"high"}}'
 
 # Default model for subagents. Claude Code reads CLAUDE_CODE_SUBAGENT_MODEL as
 # the fallback tier: an agent definition's `model:` frontmatter and an explicit
 # spawn-time model both still win over it. Sonnet is the mid tier, so routine
 # search and recon stop billing at the main session's tier. Alias, not a dated
-# ID, so "sonnet" tracks whichever Sonnet is current.
+# ID, for the same reason as CLAUDE_MODEL_SETTINGS above.
 CLAUDE_SUBAGENT_MODEL='sonnet'
+
+# The defaults above whose model has no effortLevel in settings.json yet. An
+# existing key counts as that model when it contains the alias, so a hand-written
+# `claude-opus-5`, `opus[1m]` or a Bedrock spelling all mean "opus is already
+# set" and are left alone rather than gaining a second key beside them.
+# shellcheck disable=SC2016
+CLAUDE_MODEL_SETTINGS_MISSING='(
+    [(.modelSettings // {}) | to_entries[]
+        | select(.value.effortLevel != null) | .key | ascii_downcase] as $set
+    | $d | with_entries(select(.key as $k | ($set | any(contains($k))) | not))
+)'
 
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
@@ -817,12 +836,6 @@ configure_claude_settings() {
     # ── Check feature settings ──────────────────────────────────
     local feature_changes=()
 
-    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebFetch")' &>/dev/null; then
-        feature_changes+=("webfetch")
-    fi
-    if ! echo "$settings" | jq -e '(.permissions.allow // []) | index("WebSearch")' &>/dev/null; then
-        feature_changes+=("websearch")
-    fi
     # Offer the change when attribution is unset, or when a prior run set
     # commit/pr blank before sessionUrl existed (migrate by adding sessionUrl).
     if echo "$settings" | jq -e '
@@ -843,11 +856,14 @@ configure_claude_settings() {
     if ! echo "$settings" | jq -e '.outputStyle' &>/dev/null; then
         feature_changes+=("outputstyle")
     fi
-    local stale_effort_pins
-    stale_effort_pins=$(echo "$settings" | jq -r --argjson p "$CLAUDE_PREVIOUS_EFFORT_PINS" \
-        "$CLAUDE_STALE_EFFORT_PINS"' | join(", ")' 2>/dev/null)
-    if [[ -n "$stale_effort_pins" ]]; then
-        feature_changes+=("effortpins")
+    # A top-level effortLevel is an existing preference: adding per-model
+    # defaults for Fable/Opus would give those two models a modelSettings
+    # entry that takes precedence over it, silently overriding the user's
+    # choice. Leave it alone rather than layering a narrower override on top.
+    if ! echo "$settings" | jq -e '.effortLevel != null' &>/dev/null &&
+        ! echo "$settings" | jq -e --argjson d "$CLAUDE_MODEL_SETTINGS" \
+            "$CLAUDE_MODEL_SETTINGS_MISSING"' | length == 0' &>/dev/null; then
+        feature_changes+=("modelsettings")
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
@@ -892,13 +908,11 @@ configure_claude_settings() {
         echo ""
         for change in "${feature_changes[@]}"; do
             case "$change" in
-                webfetch)    echo -e "  • ${BOLD}WebFetch${NC}: allow web page fetching without prompting" ;;
-                websearch)   echo -e "  • ${BOLD}WebSearch${NC}: allow web searches without prompting" ;;
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
                 teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
                 subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
-                effortpins)  echo -e "  • ${BOLD}modelSettings${NC}: remove the effort pins an earlier setup wrote (${stale_effort_pins}) so Claude Code's per-model defaults apply" ;;
+                modelsettings) echo -e "  • ${BOLD}modelSettings${NC}: default reasoning effort per model (Fable medium, Opus high)" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
                 statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
@@ -908,18 +922,13 @@ configure_claude_settings() {
         if prompt_yes_no "  Apply these settings?"; then
             for change in "${feature_changes[@]}"; do
                 case "$change" in
-                    webfetch)    updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebFetch"])') ;;
-                    websearch)   updated=$(echo "$updated" | jq '.permissions.allow = ((.permissions.allow // []) + ["WebSearch"])') ;;
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
                     teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
                     subagentmodel) updated=$(echo "$updated" | jq --arg m "$CLAUDE_SUBAGENT_MODEL" \
                                        '.env = ((.env // {}) + {"CLAUDE_CODE_SUBAGENT_MODEL": $m})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
-                    effortpins)  updated=$(echo "$updated" | jq --argjson p "$CLAUDE_PREVIOUS_EFFORT_PINS" \
-                                       "$CLAUDE_STALE_EFFORT_PINS"' as $stale
-                                       | reduce $stale[] as $k (.; del(.modelSettings[$k].effortLevel)
-                                           | if .modelSettings[$k] == {} then del(.modelSettings[$k]) else . end)
-                                       | if .modelSettings == {} then del(.modelSettings) else . end') ;;
+                    modelsettings) updated=$(echo "$updated" | jq --argjson d "$CLAUDE_MODEL_SETTINGS" \
+                                       "$CLAUDE_MODEL_SETTINGS_MISSING"' as $add | .modelSettings = ((.modelSettings // {}) * $add)') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
                     statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
@@ -965,17 +974,12 @@ configure_claude_settings() {
 
 # Default model and reasoning effort for Codex subagents. Codex resolves each
 # from the spawn call, then the agent file, then these [agents] defaults, then
-# the parent session, so this only sets the floor. GPT-6 Sol is the mid-tier
-# workhorse (roughly Sonnet's cost/performance slot, priced like the GPT-5.6
-# Terra it replaces); medium keeps the effort we ran Terra at. Pinned
-# explicitly so a future model default cannot quietly move it.
-CODEX_SUBAGENT_MODEL='gpt-6-sol'
+# the parent session, so this only sets the floor. Terra is the mid-tier
+# workhorse (roughly Sonnet's cost/performance slot); medium is the effort
+# OpenAI recommends for it. Pinned explicitly so a future model default cannot
+# quietly move it.
+CODEX_SUBAGENT_MODEL='gpt-5.6-terra'
 CODEX_SUBAGENT_EFFORT='medium'
-
-# Subagent models this script pinned in earlier releases. A config still on one
-# of these is offered the current default; any other value is the user's own
-# choice and is left alone.
-CODEX_SUBAGENT_PREVIOUS_MODELS=('gpt-5.6-terra')
 
 configure_codex_settings() {
     local config_file="$HOME/.codex/config.toml"
@@ -1002,17 +1006,8 @@ configure_codex_settings() {
     fi
 
     # Check for subagent defaults under [agents]
-    local current_subagent_model="" previous
     if ! grep -qE '^default_subagent_model\s*=' "$config_file" 2>/dev/null; then
         changes+=("add_subagent_defaults")
-    else
-        current_subagent_model=$(sed -nE 's/^default_subagent_model[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$config_file" | head -n 1)
-        for previous in "${CODEX_SUBAGENT_PREVIOUS_MODELS[@]}"; do
-            if [[ "$current_subagent_model" == "$previous" ]]; then
-                changes+=("upgrade_subagent_model")
-                break
-            fi
-        done
     fi
 
     if [[ ${#changes[@]} -eq 0 ]]; then
@@ -1028,7 +1023,6 @@ configure_codex_settings() {
             remove_collab)   echo -e "  • ${BOLD}Remove collab${NC}: deprecated, replaced by multi_agent" ;;
             add_multi_agent) echo -e "  • ${BOLD}multi_agent = true${NC}: enable multi-agent collaboration" ;;
             add_subagent_defaults) echo -e "  • ${BOLD}[agents] defaults${NC}: run subagents on ${CODEX_SUBAGENT_MODEL} at ${CODEX_SUBAGENT_EFFORT} effort instead of inheriting your main model" ;;
-            upgrade_subagent_model) echo -e "  • ${BOLD}Subagent model${NC}: upgrade ${current_subagent_model} to ${CODEX_SUBAGENT_MODEL}" ;;
         esac
     done
     echo ""
@@ -1070,10 +1064,6 @@ multi_agent = true' "$config_file"
                         printf '\n[agents]\ndefault_subagent_model = "%s"\ndefault_subagent_reasoning_effort = "%s"\n' \
                             "$CODEX_SUBAGENT_MODEL" "$CODEX_SUBAGENT_EFFORT" >> "$config_file"
                     fi
-                    ;;
-                upgrade_subagent_model)
-                    sed -i.bak -E "s/^(default_subagent_model[[:space:]]*=[[:space:]]*)\"${current_subagent_model}\"/\\1\"${CODEX_SUBAGENT_MODEL}\"/" "$config_file"
-                    rm -f "${config_file}.bak"
                     ;;
             esac
         done
@@ -1288,16 +1278,16 @@ configure_impeccable_skills() {
     echo "  Install or update the Impeccable design skills (https://impeccable.style)?"
     echo "  A shared design vocabulary and commands for your agent: typography,"
     echo "  color, motion, layout, polish, and AI-slop detection."
-    echo "  Runs via npx (always the latest), so re-running refreshes an existing"
+    echo "  Runs via npx at a pinned version, so re-running refreshes an existing"
     echo "  install and adds any newly-selected agents:"
-    echo "    npx impeccable install --providers=${providers} --scope=global"
+    echo "    npx ${IMPECCABLE_PKG} install --providers=${providers} --scope=global"
     echo ""
     if prompt_yes_no "  Install/update Impeccable skills?"; then
         if ! command -v npx &>/dev/null; then
             print_warning "npx not found; install Node.js to use Impeccable skills"
             return
         fi
-        if npx impeccable install --providers="$providers" --scope=global; then
+        if npx "$IMPECCABLE_PKG" install --providers="$providers" --scope=global; then
             print_success "Installed/updated Impeccable skills for: ${providers}"
         else
             print_warning "Impeccable install failed; see output above"
