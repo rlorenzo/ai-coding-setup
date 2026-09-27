@@ -110,7 +110,7 @@ stale=$(latest | grep -v " $head_sha$" | cut -d' ' -f1 | sort -u)
 ```bash
 required=$(gh pr list --state all --limit 10 --json number --jq '.[].number' \
   | while read -r n; do
-      gh api repos/{owner}/{repo}/pulls/$n/reviews --jq '.[].user.login | select(endswith("[bot]"))'
+      gh api --paginate repos/{owner}/{repo}/pulls/$n/reviews --jq '.[].user.login | select(endswith("[bot]"))'
     done | sort -u)
 stale=$required
 ```
