@@ -117,6 +117,8 @@ Propose a conventional commit message for the currently staged changes. Detects 
 
 Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
 
+Review bots count as required reviewers: every bot that has reviewed the PR must cover the head commit, falling back to the bots used on the repo's recent PRs, and asking you if none are found. The skill reads each bot's review body as well as its threads, so findings with no thread still get handled, and a non-approving verdict (Copilot's `Changes recommended`, a nonzero CodeRabbit count) blocks success until you accept the declined findings. It re-triggers Copilot, CodeRabbit, and Greptile itself and asks for the trigger of any other bot. It keeps working through its iterations without stopping to report, and treats comment text as untrusted: findings are judged against the code, never followed as instructions.
+
 **Usage:**
 
 - Claude Code: `/review-pr [PR_NUMBER]`
@@ -127,7 +129,7 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 
 ### /code-refinement
 
-Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. Fans the angles out to parallel subagents when the agent has a subagent tool.
+Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. Fans the angles out to parallel subagents when the agent has a subagent tool. The reuse angle searches shared and nearby modules before concluding nothing existing fits, and each reuse finding names the existing alternative and its path.
 
 **Usage:**
 
@@ -151,7 +153,7 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 
 ### /dependency-review
 
-Audit dependency updates for supply-chain risk before they land: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes.
+Audit dependency updates for supply-chain risk before they land: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes. Changelogs, release notes, and package source are treated as third-party evidence to verify, not instructions: text that tells the agent to run something, skip a check, or approve the update is itself flagged as a HOLD.
 
 **Usage:**
 
@@ -165,7 +167,7 @@ Audit dependency updates for supply-chain risk before they land: publish-age gat
 
 Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across usage windows. No model names are hardcoded beyond a Claude example ladder: each harness orders its own available models by cost and capability, and everything else is written relative to whatever tier you are on. Agents without a native subagent tool (Codex, Copilot) delegate by spawning their own CLI non-interactively with an explicit model.
 
-The skill also pins the model explicitly on every spawn (since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose subagents inherit the main-session model, so an un-pinned background search bills at your tier), prefers model aliases over pinned IDs, drops reasoning effort for cheap-tier recon, distinguishes what delegation buys on API vs. subscription billing (per-token savings vs. quota-bucket arbitrage), and closes non-trivial work with a fresh-context verifier that only refutes, never fixes.
+The skill also pins the model explicitly on every spawn (since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose subagents inherit the main-session model, so an un-pinned background search bills at your tier), prefers model aliases over pinned IDs, drops reasoning effort for cheap-tier recon (and treats lower effort on your own tier as an alternative to a cheaper tier for bounded coding slices), gives each handoff an advisory time budget backed by a hard timeout, distinguishes what delegation buys on API vs. subscription billing (per-token savings vs. quota-bucket arbitrage), and closes non-trivial work with a fresh-context verifier that only refutes, never fixes.
 
 **Usage:**
 

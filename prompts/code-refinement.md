@@ -33,8 +33,9 @@ or library functions instead of hand-rolled logic. If the staged code
 reimplements behavior that the project's framework or core libraries already
 provide, flag it and name the existing alternative to call instead. This covers
 the UI framework too: flag custom CSS or hand-built HTML that duplicates a
-component or utility class the framework already ships. Grep shared/utility
-modules and files adjacent to the change.
+component or utility class the framework already ships. Before concluding
+nothing existing covers the change, grep shared/utility modules and files
+adjacent to it; a reuse finding names the existing alternative and its path.
 
 ### Efficiency
 
