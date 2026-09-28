@@ -56,7 +56,9 @@ gh api --paginate --slurp repos/{owner}/{repo}/pulls/{PR_NUMBER}/reviews \
            | group_by(.user.login) | map(max_by(.submitted_at)) | .[] | "=== \(.user.login)\n\(.body)"'
 ```
 
-Every issue a body raises counts, whether it has its own entry or is only named in the summary, and whatever section it sits in (`Previously missed`, `Outside diff range`, `Nitpick`), except ones marked resolved or fixed. A findings count in the body may cover inline comments only. Strip zero-width spaces from cited paths before opening them: `sed $'s/\xe2\x80\x8b//g'` (bash turns the escape into the literal bytes, so any sed matches it). Note each body's verdict for the report.
+Every issue a body raises counts, whether it has its own entry or is only named in the summary, and whatever section it sits in (`Previously missed`, `Outside diff range`, `Nitpick`), except ones marked resolved or fixed. A findings count in the body may cover inline comments only. Strip zero-width spaces from cited paths before opening them: `sed $'s/\xe2\x80\x8b//g'` (bash turns the escape into the literal bytes, so any sed matches it).
+
+Read each body's verdict. A body that approves or reports zero issues is clean; one that asks for changes, flags something for a closer look, or counts open issues is not. For example, Copilot says `Approval recommended` (clean) or `Changes recommended`/`Needs a closer look` (not clean); CodeRabbit says `Actionable comments posted: 0` or `No actionable comments` (clean) or a nonzero count (not clean). Note each verdict for the report: a non-approving verdict blocks success in step 5 even when every finding has been addressed or declined.
 
 A body finding has no thread to reply to or resolve. Classify it as in step 3, fix or decline it, then append `body: <path:line or "summary"> <title>` to `$IGNORED_FILE`. Bots repeat findings in every re-review, so skip any already listed there (`grep -qxF`).
 
@@ -99,12 +101,23 @@ latest() { gh api --paginate --slurp repos/{owner}/{repo}/pulls/{PR_NUMBER}/revi
   | jq -r 'add | [.[] | select(.user.login | endswith("[bot]"))] | group_by(.user.login)
            | map(max_by(.submitted_at)) | .[] | "\(.user.login) \(.commit_id)"'; }
 
+required=$(latest | cut -d' ' -f1 | sort -u)
 stale=$(latest | grep -v " $head_sha$" | cut -d' ' -f1 | sort -u)
 ```
 
-`/reviews` identifies the review bots; CI and deploy bots never appear there. Pipe `--slurp` to `jq`, not `--jq`: under `--paginate` a `--jq` filter runs per page, so `max_by` returns a per-page max and lists a bot twice.
+`/reviews` identifies the review bots; CI and deploy bots never appear there. Pipe `--slurp` to `jq`, not `--jq`: under `--paginate` a `--jq` filter runs per page, so `max_by` returns a per-page max and lists a bot twice. `required` is every bot that has reviewed this PR, and `stale` is those minus the ones that already reviewed `head_sha`. If `required` is empty, no bot has reviewed this PR yet, which is not complete coverage. Fall back to the bots used on the repo's recent PRs:
 
-Empty `stale` → re-run step 2b: new body findings → step 3, none → success, stop. Otherwise re-trigger each login; bots do not re-review a push on their own.
+```bash
+required=$(gh pr list --state all --limit 10 --json number --jq '.[].number' \
+  | while read -r n; do
+      gh api --paginate repos/{owner}/{repo}/pulls/$n/reviews --jq '.[].user.login | select(endswith("[bot]"))'
+    done | sort -u)
+stale=$required
+```
+
+Still empty → ask the user which bot to request, offering the ones in the table below; with no user to ask, stop and report that no review bot is configured.
+
+Empty `stale` → re-run step 2b: unhandled body findings or a non-approving verdict → step 3; both clean → success, stop. Otherwise re-trigger each login; bots do not re-review a push on their own.
 
 | Bot | Login | Re-trigger with |
 | --- | --- | --- |
