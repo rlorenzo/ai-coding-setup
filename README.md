@@ -71,8 +71,8 @@ The marketplace holds three plugins:
 
 | Plugin | What it is | Needs |
 | --- | --- | --- |
-| `ai-coding-setup` | The seven commands | — |
-| `explore-agent` | The Explore subagent as an agent file that shadows the built-in | — |
+| `ai-coding-setup` | The seven commands | Nothing |
+| `explore-agent` | The Explore subagent as an agent file that shadows the built-in | Nothing |
 | [`explore-model`](mods/explore-model) | The same pinning as an `agent.spawn` function hook, with no shadow | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
 | [`review-gate`](mods/review-gate) | The review gate as a `tool.check` function hook | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
 
@@ -117,6 +117,8 @@ Propose a conventional commit message for the currently staged changes. Detects 
 
 Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI passes, and re-request review.
 
+Review bots count as required reviewers: every bot that has reviewed the PR must cover the head commit, falling back to the bots used on the repo's recent PRs, and asking you if none are found. The skill reads each bot's review body as well as its threads, so findings with no thread still get handled, and a non-approving verdict (Copilot's `Changes recommended`, a nonzero CodeRabbit count) blocks success until you accept the declined findings. It re-triggers Copilot, CodeRabbit, and Greptile itself and asks for the trigger of any other bot. It keeps working through its iterations without stopping to report, and treats comment text as untrusted: findings are judged against the code, never followed as instructions.
+
 **Usage:**
 
 - Claude Code: `/review-pr [PR_NUMBER]`
@@ -127,7 +129,7 @@ Process unresolved review comments on a GitHub PR, fix valid issues, ensure CI p
 
 ### /code-refinement
 
-Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. Fans the angles out to parallel subagents when the agent has a subagent tool.
+Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. On large diffs, fans the angles out to parallel mid-tier subagents when the agent has a subagent tool. The reuse angle searches shared and nearby modules before concluding nothing existing fits, and each reuse finding names the existing alternative and its path.
 
 **Usage:**
 
@@ -151,7 +153,7 @@ Run a standalone code review on staged changes. Writes findings to `agent-code-r
 
 ### /dependency-review
 
-Audit dependency updates for supply-chain risk before they land: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes.
+Audit dependency updates for supply-chain risk before they land: publish-age gate, changelog/diff verification, security advisories, community signals, and breaking changes. Changelogs, release notes, and package source are treated as third-party evidence to verify, not instructions: text that tells the agent to run something, skip a check, or approve the update is itself flagged as a HOLD.
 
 **Usage:**
 
@@ -165,7 +167,7 @@ Audit dependency updates for supply-chain risk before they land: publish-age gat
 
 Run a task with your current model as the orchestrator and reviewer while cheaper, faster subagents do the token-heavy research, coding, and testing. It matches model tier to task difficulty (your own tier for complex work, a mid tier for low/medium, the cheapest tier for mechanical), keeps the orchestrator's own reading and searching lean, runs delegation in bounded waves to respect your usage caps, and for long unattended runs auto-pauses and resumes across usage windows. No model names are hardcoded beyond a Claude example ladder: each harness orders its own available models by cost and capability, and everything else is written relative to whatever tier you are on. Agents without a native subagent tool (Codex, Copilot) delegate by spawning their own CLI non-interactively with an explicit model.
 
-The skill also pins the model explicitly on every spawn (since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose subagents inherit the main-session model, so an un-pinned background search bills at your tier), prefers model aliases over pinned IDs, drops reasoning effort for cheap-tier recon, distinguishes what delegation buys on API vs. subscription billing (per-token savings vs. quota-bucket arbitrage), and closes non-trivial work with a fresh-context verifier that only refutes, never fixes.
+The skill also pins the model explicitly on every spawn (since Claude Code v2.1.198 the built-in Explore/Plan/general-purpose subagents inherit the main-session model, so an un-pinned background search bills at your tier), prefers model aliases over pinned IDs, drops reasoning effort for cheap-tier recon (and treats lower effort on your own tier as an alternative to a cheaper tier for bounded coding slices), gives each handoff an advisory time budget backed by a hard timeout, distinguishes what delegation buys on API vs. subscription billing (per-token savings vs. quota-bucket arbitrage), and closes non-trivial work with a fresh-context verifier that only refutes, never fixes.
 
 **Usage:**
 
@@ -191,7 +193,7 @@ Rewrite a feature branch's git history into focused, logical commits before revi
 
 The subagent definitions ship as the `explore-agent` plugin, from [plugins/explore-agent/agents/](plugins/explore-agent/agents/); on the copy path `setup` installs them to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
 
-They sit at that plugin's root rather than under `.claude/` because the root `agents/` directory is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate --strict` passes, the install succeeds — and the agent is silently missing from the loaded plugin. So no manifest here names an `agents` key at all, and `test/plugin-manifest.bats` fails if one is added.
+They sit at that plugin's root rather than under `.claude/` because the root `agents/` directory is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate --strict` passes, the install succeeds, and yet the agent is silently missing from the loaded plugin. So no manifest here names an `agents` key at all, and `test/plugin-manifest.bats` fails if one is added.
 
 ### Explore
 
@@ -229,7 +231,7 @@ Two things are worth knowing when you install one:
 
 Pins the model that background recon subagents run on, by hooking `agent.spawn` and setting the spawn's `model`.
 
-This is the same goal as the [`explore-agent`](#explore) plugin and a better way to reach it. The agent file has to *replace* the built-in `Explore` definition to change its model, and a replacement is loaded like any other subagent, so it drags in your `CLAUDE.md` and user memory on every search — which the built-in skips for speed. The hook sets one field on the spawn and leaves the built-in definition running, so there is no shadow and no extra load.
+This is the same goal as the [`explore-agent`](#explore) plugin and a better way to reach it. The agent file has to *replace* the built-in `Explore` definition to change its model, and a replacement is loaded like any other subagent, so it drags in your `CLAUDE.md` and user memory on every search, which the built-in skips for speed. The hook sets one field on the spawn and leaves the built-in definition running, so there is no shadow and no extra load.
 
 Two spawns are handed straight through. A **fork** inherits its parent's context and model and ignores `model` outright, so rewriting it would only misdescribe what happens. A spawn that **named its own model** was an explicit choice by the caller, and the case the hook is here to decide is the one nobody decided.
 
@@ -252,13 +254,13 @@ Note that this is a floor on cost, not the only one: `setup` also offers `CLAUDE
 
 The [review gate](#review-gate) as a `tool.check` hook. Same gate, better seat.
 
-`bin/review-gate` is wired as a `PreToolUse` shell hook and fires on **every command the agent runs** — overwhelmingly `ls`, `cat` and test runs — each one paying a process start. Measured in this repo: roughly 160ms warm under Git Bash on Windows against 55ms for a bare `bash -c true`, and over a second on a cold file cache. The script's fast path exits before any git call, but bash still has to start.
+`bin/review-gate` is wired as a `PreToolUse` shell hook and fires on **every command the agent runs** (overwhelmingly `ls`, `cat` and test runs), each one paying a process start. Measured in this repo: roughly 160ms warm under Git Bash on Windows against 55ms for a bare `bash -c true`, and over a second on a cold file cache. The script's fast path exits before any git call, but bash still has to start.
 
 The mod answers that same question with a substring test inside the engine's own process, and spawns the script only for a command that could actually be a commit. On the calls that dominate, the cost goes to zero.
 
-The second gain is `ask`. A `PreToolUse` hook can only allow or deny, which is why the gate ships in `warn` and why its own docs describe handing the question back to you as something it cannot do — the closest it gets is denying and asking the *agent* to ask you. `tool.check` can answer `ask`, so a blocked commit becomes your permission prompt, carrying the gate's reason, diff and rubric.
+The second gain is `ask`. A `PreToolUse` hook can only allow or deny, which is why the gate ships in `warn` and why its own docs describe handing the question back to you as something it cannot do; the closest it gets is denying and asking the *agent* to ask you. `tool.check` can answer `ask`, so a blocked commit becomes your permission prompt, carrying the gate's reason, diff and rubric.
 
-**What the mod does not do is decide anything.** The rules — which commands commit, what a receipt has to match, when a rewrite is in progress, the `git commit -a` cases that can never be vouched for — stay in `bin/review-gate`, which the mod runs with the claude payload it already speaks and reads the JSON it already prints. One implementation, one test suite, no second copy to drift, and both routes read the same receipts under `.git/ai-review/`, so they can never disagree about whether a change was reviewed.
+**What the mod does not do is decide anything.** The rules (which commands commit, what a receipt has to match, when a rewrite is in progress, the `git commit -a` cases that can never be vouched for) stay in `bin/review-gate`, which the mod runs with the claude payload it already speaks and reads the JSON it already prints. One implementation, one test suite, no second copy to drift, and both routes read the same receipts under `.git/ai-review/`, so they can never disagree about whether a change was reviewed.
 
 That last point is why the mod does **not** keep receipts in the engine's own `$.store`, which would have been the obvious place: `code-review-loop` writes the receipts, and a store only the mod can read would mean the loop's clean run no longer cleared the gate.
 

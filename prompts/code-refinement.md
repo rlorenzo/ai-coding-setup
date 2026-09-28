@@ -8,12 +8,15 @@ a bug hunt: correctness review is `code-review`'s job.
 Run `git diff --staged` to get the changes under review. That diff is the
 scope for every angle below.
 
-If you have a subagent tool (Claude Code's Agent tool, or your CLI's
-equivalent), launch one agent per angle, all in a single message so they run
-concurrently, and give each the staged diff plus its angle. Tell each agent it
-is read-only: it reports findings, it does not edit. If you have no subagent
-tool, work through all four angles yourself in one pass. Do not skip an angle
-for lack of fan-out.
+Fan out only when the diff is large (roughly 300+ changed lines per
+`git diff --staged --shortstat`) and you have a subagent tool (Claude Code's
+Agent tool, or your CLI's equivalent). Then launch one agent per angle, all in
+a single message so they run concurrently, each on a mid-tier model (Claude:
+`sonnet`) rather than inheriting yours, and give each the staged diff plus its
+angle. Tell each agent it is read-only: it reports findings, it does not edit.
+Otherwise work through all four angles yourself in one pass: on a small diff,
+four agents each rebuilding context cost more than one reviewer. Do not skip
+an angle either way.
 
 Each finding needs a file, a line, a one-line summary, and the concrete cost:
 what is duplicated, wasted, or harder to maintain.
@@ -33,8 +36,9 @@ or library functions instead of hand-rolled logic. If the staged code
 reimplements behavior that the project's framework or core libraries already
 provide, flag it and name the existing alternative to call instead. This covers
 the UI framework too: flag custom CSS or hand-built HTML that duplicates a
-component or utility class the framework already ships. Grep shared/utility
-modules and files adjacent to the change.
+component or utility class the framework already ships. Before concluding
+nothing existing covers the change, grep shared/utility modules and files
+adjacent to it; a reuse finding names the existing alternative and its path.
 
 ### Efficiency
 
