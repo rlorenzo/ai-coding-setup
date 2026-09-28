@@ -129,7 +129,7 @@ Review bots count as required reviewers: every bot that has reviewed the PR must
 
 ### /code-refinement
 
-Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. Fans the angles out to parallel subagents when the agent has a subagent tool. The reuse angle searches shared and nearby modules before concluding nothing existing fits, and each reuse finding names the existing alternative and its path.
+Review staged files against four quality angles (simplification, reuse, efficiency, altitude), apply the fixes, fix linting issues, and check test coverage. On large diffs, fans the angles out to parallel mid-tier subagents when the agent has a subagent tool. The reuse angle searches shared and nearby modules before concluding nothing existing fits, and each reuse finding names the existing alternative and its path.
 
 **Usage:**
 

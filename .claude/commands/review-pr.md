@@ -25,7 +25,7 @@ Extract owner/name from `gh repo view --json owner,name`. Set `IGNORED_FILE=".re
 
 ### 1. Fix failing CI
 
-Run `gh pr checks`. On failure: `gh run view <run_id> --log-failed`, fix, commit, push, wait for green.
+Run `gh pr checks`. On failure: `gh run view <run_id> --log-failed | tail -n 200` (widen the window only if the cause isn't in it), fix, commit, push, wait for green.
 
 ### 2. Fetch unresolved threads
 
