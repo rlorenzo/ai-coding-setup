@@ -728,6 +728,20 @@ stub_codex() { # records the argv of `codex exec`, then succeeds
     assert_output "done"
 }
 
+@test "_restore_blocking_io clears O_NONBLOCK on a stderr separate from stdout" {
+    command -v perl >/dev/null || skip "perl not installed"
+    source_lib
+    local flag="$BATS_TEST_TMPDIR/nonblock"
+    # stderr on its own pipe, set non-blocking the way claude -p leaves it.
+    {
+        perl -MFcntl -e 'fcntl(STDERR, F_SETFL, fcntl(STDERR, F_GETFL, 0) | O_NONBLOCK)'
+        _restore_blocking_io
+        perl -MFcntl -e 'print((fcntl(STDERR, F_GETFL, 0) & O_NONBLOCK) ? "nonblocking" : "blocking")' > "$flag"
+    } 2> >(cat >/dev/null)
+    run cat "$flag"
+    assert_output "blocking"
+}
+
 @test "run_antigravity sandboxes only read-only calls" {
     source_lib
     mkdir -p "$TEST_TMPDIR/stub"

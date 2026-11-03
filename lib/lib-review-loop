@@ -359,7 +359,7 @@ _restore_blocking_io() {
             open(my $h, ($fd ? ">&=" : "<&="), $fd) or next;
             my $fl = fcntl($h, F_GETFL, 0) or next;
             fcntl($h, F_SETFL, $fl & ~O_NONBLOCK);
-        }' 2>/dev/null || true
+        }' || true   # no 2>/dev/null: perl would then fix /dev/null, not our stderr
 }
 
 # Mirrors the agent's combined output to AGENT_LOG when set. Without it an agent
