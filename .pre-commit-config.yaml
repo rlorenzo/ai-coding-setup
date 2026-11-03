@@ -33,8 +33,11 @@ repos:
       # is exactly the trust boundary it was written for, so the scan runs
       # before the skills leave here rather than after someone installs them.
       #
-      # Pinned to the commit behind v2.11.0. The project is not on PyPI, so the
-      # dependency is a git URL, and a tag can be moved where a SHA cannot.
+      # Pinned to ae1cdf2 on main (2026-10-28, "feat: support Python 3.15"),
+      # untagged: no release includes 3.15 support yet (v2.13.3 still caps at
+      # <3.15). Move to the first tagged release that does. The project is not
+      # on PyPI, so the dependency is a git URL, and a tag can be moved where a
+      # SHA cannot.
       #
       # `--no-llm` keeps it to the static analyzers. The semantic ones want an
       # API key that neither a contributor's laptop nor CI has, and the tool
@@ -55,7 +58,7 @@ repos:
         args: ["scan", ".codex/skills", "--recursive", "--no-llm"]
         language: python
         additional_dependencies:
-          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
+          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@ae1cdf2fdb98507cc07c21aabe3aab782041cf41"
         pass_filenames: false
         # Only the scanned copies. The sync hook above will not let a change to
         # the sources land without the regenerated `.codex/skills/` beside it,
@@ -72,7 +75,7 @@ repos:
         args: ["scan", "plugins/explore-agent/agents/Explore.md", "--no-llm"]
         language: python
         additional_dependencies:
-          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@b7241089d7ec15d8b30df980dacbb428214732b9"
+          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@ae1cdf2fdb98507cc07c21aabe3aab782041cf41"
         pass_filenames: false
         files: ^plugins/explore-agent/agents/
         stages: [pre-commit]
