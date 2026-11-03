@@ -34,6 +34,14 @@ BIN="$PROJECT_ROOT/bin/code-review-loop"
     assert_output --partial "Unknown agent"
 }
 
+@test "code-review-loop outside a git repo says so instead of exiting silently" {
+    mkdir -p "$BATS_TEST_TMPDIR/nogit"
+    cd "$BATS_TEST_TMPDIR/nogit"
+    GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR" run "$BIN" -s -m 1
+    assert_failure
+    assert_output --partial "must be run inside a git repository"
+}
+
 # =========================================================================
 # Run log staging exclusion
 #

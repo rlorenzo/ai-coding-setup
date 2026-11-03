@@ -619,11 +619,14 @@ make_run_dir() { # make_run_dir <root> <name> <days-old>
 # failure looked like a codex problem rather than ours, so pin the contract.
 # =========================================================================
 
-stub_codex() { # records the argv it was invoked with, then succeeds
+stub_codex() { # records the argv of `codex exec`, then succeeds
+    # `codex mcp list --json` prints $CODEX_MCP_JSON (default: no servers).
     local dir="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$dir"
     {
         echo '#!/usr/bin/env bash'
+        # shellcheck disable=SC2016  # written into the stub, expanded there
+        printf '%s\n' 'if [[ "$1" == mcp ]]; then printf "%s\n" "${CODEX_MCP_JSON:-[]}"; exit 0; fi'
         echo 'cat >/dev/null'
         printf 'printf "%%s\\n" "$@" > %q\n' "$BATS_TEST_TMPDIR/codex-argv"
     } > "$dir/codex"
@@ -659,11 +662,62 @@ stub_codex() { # records the argv it was invoked with, then succeeds
     assert_success
     run cat "$BATS_TEST_TMPDIR/codex-argv"
     assert_output --partial "exec"
-    assert_output --partial "mcp_servers={}"
+    assert_line "apps"
     # The trailing "-" is what makes codex read the prompt from stdin.
     # assert_line matches a whole argument: --partial would also be satisfied
     # by the hyphens in --sandbox, so it would pass with the "-" removed.
     assert_line "-"
+}
+
+@test "run_codex switches off every configured MCP server by name" {
+    command -v jq >/dev/null || skip "jq not installed"
+    source_lib
+    stub_codex
+    # -c mcp_servers={} merges into the user's table instead of replacing it,
+    # so a server left out of the flags would still start.
+    export CODEX_MCP_JSON='[{"name":"playwright","enabled":true},{"name":"my.srv","enabled":true},{"name":"off","enabled":false}]'
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/codex-argv"
+    assert_line 'mcp_servers.playwright.enabled=false'
+    refute_output --partial 'my.srv'
+    refute_output --partial 'mcp_servers.off'
+    refute_output --partial "mcp_servers={}"
+}
+
+@test "run_codex warns about an MCP server name it cannot address" {
+    command -v jq >/dev/null || skip "jq not installed"
+    source_lib
+    stub_codex
+    export CODEX_MCP_JSON='[{"name":"my.srv","enabled":true}]'
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    assert_output --partial "cannot disable codex MCP server 'my.srv'"
+}
+
+@test "run_codex skips the git repo check so plans outside a repo can be reviewed" {
+    source_lib
+    stub_codex
+    run run_agent codex "a prompt" "Read"
+    assert_success
+    run cat "$BATS_TEST_TMPDIR/codex-argv"
+    assert_line "--skip-git-repo-check"
+}
+
+@test "snapshot_untracked succeeds outside a git repo under set -euo pipefail" {
+    mkdir -p "$BATS_TEST_TMPDIR/nogit"
+    cd "$BATS_TEST_TMPDIR/nogit"
+    GIT_CEILING_DIRECTORIES="$BATS_TEST_TMPDIR" run bash -c \
+        "set -euo pipefail; source '$PROJECT_ROOT/lib/lib-review-loop'; snapshot_untracked >/dev/null; echo survived"
+    assert_success
+    assert_output --partial "survived"
+}
+
+@test "an unexpected failure names the command instead of exiting silently" {
+    run bash -c "set -euo pipefail; source '$PROJECT_ROOT/lib/lib-review-loop'; false; echo unreachable"
+    assert_failure
+    assert_output --partial "'false' failed"
+    refute_output --partial "unreachable"
 }
 
 @test "run_antigravity sandboxes only read-only calls" {
