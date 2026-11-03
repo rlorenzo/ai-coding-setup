@@ -16,6 +16,24 @@
 [[ -n "${_LIB_REVIEW_LOOP_LOADED:-}" ]] && return 0
 _LIB_REVIEW_LOOP_LOADED=1
 
+# ---- report unexpected exits ----------------------------------------------
+# The loops run under `set -euo pipefail`, so a failing command anywhere ends
+# the run with no output at all.  Name the command and line instead.  errtrace
+# carries the trap into functions; the BASH_SUBSHELL check keeps a failure
+# inside $(...) from being reported twice (once there, once in the caller).
+# Opt-in: review-gate sources this library without errexit, where a non-zero
+# status such as `(( i++ ))` at i=0 is routine, not a failure.
+_review_loop_on_err() {
+    local rc=$? cmd="$1" line="$2" src="$3"
+    (( BASH_SUBSHELL == 0 )) || return "$rc"
+    echo -e "${RED:-}ERROR: $(basename "$src") stopped: '$cmd' failed (exit $rc) at line $line.${NC:-}" >&2
+    return "$rc"
+}
+report_unexpected_exits() {
+    set -o errtrace
+    trap '_review_loop_on_err "$BASH_COMMAND" "$LINENO" "${BASH_SOURCE[0]:-$0}"' ERR
+}
+
 # ---- colors (disabled when stdout is not a terminal) ----------------------
 # shellcheck disable=SC2034  # colors are used by sourcing scripts
 RED='\033[0;31m'
@@ -166,7 +184,9 @@ run_claude() {
 }
 
 # Run Codex CLI with a prompt.  Wraps the prompt with a preamble that prevents
-# conversational output, and disables MCP servers to avoid artifact creation.
+# conversational output, and disables MCP servers to avoid artifact creation:
+# every server in `codex mcp list` by name, plus `--disable apps` for the
+# built-in codex_apps connector server.
 #
 # --sandbox workspace-write, not --full-auto: codex-cli dropped --full-auto from
 # the `exec` subcommand (gone as of 0.147.0), and an unknown flag is a hard
@@ -176,13 +196,41 @@ run_claude() {
 # that the reviewer can write agent-code-review.md.  That makes workspace-write
 # the most restrictive mode the reviewer can run in (read-only cannot write the
 # report); its sandbox also has network access off by default.
+#
+# --skip-git-repo-check: codex exec refuses to start in a directory that is
+# neither a git repo nor trusted in ~/.codex/config.toml ("Not inside a trusted
+# directory"), and plan-review-loop runs on plans outside a repo.  The sandbox
+# still applies; the check only gates which directories codex will start in.
 #   $1: prompt text
 run_codex() {
     local prompt="$1"
     local wrapped="Execute the following task now. Do not introduce yourself. Begin immediately.
 
 $prompt"
-    echo "$wrapped" | codex exec --sandbox workspace-write --config 'mcp_servers={}' -
+    local -a mcp_off=(--disable apps)
+    local name
+    # codex's -c parser takes quotes in a key literally (mcp_servers."x" names
+    # a new server "x" with quotes, which then fails config validation), so
+    # only bare TOML keys can be addressed.  Any other name is left running.
+    while IFS= read -r name; do
+        name=${name%$'\r'}   # jq on Windows ends lines with CRLF
+        [[ -z "$name" ]] && continue
+        if [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            mcp_off+=(--config "mcp_servers.$name.enabled=false")
+        else
+            echo -e "${YELLOW:-}WARNING: cannot disable codex MCP server '$name' for this run (not a bare TOML key).${NC:-}" >&2
+        fi
+    done < <(_codex_mcp_server_names)
+    echo "$wrapped" | codex exec --sandbox workspace-write --skip-git-repo-check "${mcp_off[@]}" -
+}
+
+# Names of the MCP servers codex would start, one per line.  `--config
+# mcp_servers={}` no longer works: -c overrides merge into the user's table
+# rather than replace it, so each server has to be switched off by name.
+# Prints nothing if codex or jq is unavailable.
+_codex_mcp_server_names() {
+    command -v jq >/dev/null 2>&1 || return 0
+    codex mcp list --json 2>/dev/null | jq -r '.[] | select(.enabled != false) | .name' 2>/dev/null || true
 }
 
 # Run Antigravity CLI with a prompt in non-interactive headless mode.
@@ -282,6 +330,7 @@ agent_command() {
 #   $3: allowed tools (only used by Claude; ignored by others)
 _dispatch_agent() {
     local agent="$1" prompt="$2" tools="${3:-}"
+    _restore_blocking_io
     # Recursion guard for bin/review-gate. The loop itself never commits, but
     # the editor agent it spawns is unconstrained and could decide to commit
     # its own fixes; without this the gate would fire from inside the loop and
@@ -296,6 +345,21 @@ _dispatch_agent() {
         kimi)        run_kimi "$prompt" ;;
         *)           echo -e "${RED}ERROR: Unknown agent: $agent${NC}"; return 1 ;;
     esac
+}
+
+# Clear O_NONBLOCK on stdin/stdout/stderr.  `claude -p` (Node) leaves the
+# file descriptions it inherited in non-blocking mode when it exits, and they
+# are shared with every later agent.  codex then panics on its next burst of
+# output ("failed printing to stderr: Resource temporarily unavailable",
+# exit 101), so the follow-up review after a claude edit never runs.
+_restore_blocking_io() {
+    command -v perl >/dev/null 2>&1 || return 0
+    perl -MFcntl -e '
+        for my $fd (0, 1, 2) {
+            open(my $h, ($fd ? ">&=" : "<&="), $fd) or next;
+            my $fl = fcntl($h, F_GETFL, 0) or next;
+            fcntl($h, F_SETFL, $fl & ~O_NONBLOCK);
+        }' || true   # no 2>/dev/null: perl would then fix /dev/null, not our stderr
 }
 
 # Mirrors the agent's combined output to AGENT_LOG when set. Without it an agent
@@ -673,8 +737,11 @@ review_gate_lock_release() {
 # ---- artifact cleanup -----------------------------------------------------
 
 # Snapshot untracked files (for detecting artifacts created during an agent run)
+# Outside a git repo (plan-review-loop allows that) git ls-files fails; under
+# the callers' `set -euo pipefail` that would silently kill the loop before the
+# reviewer runs, so an empty snapshot is returned instead.
 snapshot_untracked() {
-    git ls-files --others --exclude-standard 2>/dev/null | sort
+    { git ls-files --others --exclude-standard 2>/dev/null || true; } | sort
 }
 
 # Remove files that appeared during an agent run (artifacts), excluding known

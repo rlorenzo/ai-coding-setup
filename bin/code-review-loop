@@ -27,6 +27,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/lib-review-loop
 source "$SCRIPT_DIR/../lib/lib-review-loop"
+report_unexpected_exits
 
 # ---- defaults (hardcoded -> config file -> CLI flags) ---------------------
 EDITOR_AGENT="claude"
@@ -138,6 +139,14 @@ SCOPE: the changes under review are the output of \`git diff --staged $DIFF_BASE
 fi
 
 # ---- paths ---------------------------------------------------------------
+# Everything below reads the index, so fail with a reason instead of letting
+# the first git call trip `set -e` with no message.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: code-review-loop must be run inside a git repository; $(pwd) is not one.${NC}"
+    echo "  It reviews staged changes (git diff --staged). Run it from the repo root, or run 'git init' first."
+    exit 1
+fi
+
 PROJECT_ROOT="$(pwd)"
 REVIEW_FILE="$PROJECT_ROOT/agent-code-review.md"
 SUMMARY_FILE="$PROJECT_ROOT/agent-review-summary.md"
@@ -264,9 +273,18 @@ trap cleanup_run EXIT
 # reviewer call and its path is handed to the reviewer in place of a git
 # command.
 REVIEWER_DIFF_FILE="$TMPDIR_REVIEW/reviewer-scope.patch"
-REVIEWER_SCOPE_NOTE="
+# Only the Claude reviewer lacks a shell.  The other CLIs read files through
+# their shell, so telling them they have none makes them refuse to read the
+# patch and the review file at all.
+if [[ "$REVIEWER_AGENT" == claude ]]; then
+    REVIEWER_SCOPE_NOTE="
 
 SCOPE: the diff under review is saved at $REVIEWER_DIFF_FILE. Read that file for the full change set instead of running any diff command; you have no shell access."
+else
+    REVIEWER_SCOPE_NOTE="
+
+SCOPE: the diff under review is saved at $REVIEWER_DIFF_FILE. Read that file (for example with cat) for the full change set instead of running any diff command."
+fi
 
 # The reviewer trusts this file as its only view of the change, so a failed or
 # partial diff aborts rather than being reviewed.  Errors go to the terminal,
