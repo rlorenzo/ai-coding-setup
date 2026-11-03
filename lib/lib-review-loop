@@ -21,14 +21,18 @@ _LIB_REVIEW_LOOP_LOADED=1
 # the run with no output at all.  Name the command and line instead.  errtrace
 # carries the trap into functions; the BASH_SUBSHELL check keeps a failure
 # inside $(...) from being reported twice (once there, once in the caller).
-set -o errtrace
+# Opt-in: review-gate sources this library without errexit, where a non-zero
+# status such as `(( i++ ))` at i=0 is routine, not a failure.
 _review_loop_on_err() {
     local rc=$? cmd="$1" line="$2" src="$3"
     (( BASH_SUBSHELL == 0 )) || return "$rc"
     echo -e "${RED:-}ERROR: $(basename "$src") stopped: '$cmd' failed (exit $rc) at line $line.${NC:-}" >&2
     return "$rc"
 }
-trap '_review_loop_on_err "$BASH_COMMAND" "$LINENO" "${BASH_SOURCE[0]:-$0}"' ERR
+report_unexpected_exits() {
+    set -o errtrace
+    trap '_review_loop_on_err "$BASH_COMMAND" "$LINENO" "${BASH_SOURCE[0]:-$0}"' ERR
+}
 
 # ---- colors (disabled when stdout is not a terminal) ----------------------
 # shellcheck disable=SC2034  # colors are used by sourcing scripts
@@ -209,6 +213,7 @@ $prompt"
     # a new server "x" with quotes, which then fails config validation), so
     # only bare TOML keys can be addressed.  Any other name is left running.
     while IFS= read -r name; do
+        name=${name%$'\r'}   # jq on Windows ends lines with CRLF
         [[ -z "$name" ]] && continue
         if [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
             mcp_off+=(--config "mcp_servers.$name.enabled=false")

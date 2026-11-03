@@ -714,10 +714,18 @@ stub_codex() { # records the argv of `codex exec`, then succeeds
 }
 
 @test "an unexpected failure names the command instead of exiting silently" {
-    run bash -c "set -euo pipefail; source '$PROJECT_ROOT/lib/lib-review-loop'; false; echo unreachable"
+    run bash -c "set -euo pipefail; source '$PROJECT_ROOT/lib/lib-review-loop'; report_unexpected_exits; false; echo unreachable"
     assert_failure
     assert_output --partial "'false' failed"
     refute_output --partial "unreachable"
+}
+
+@test "sourcing the library alone installs no ERR trap" {
+    # review-gate sources it without errexit; a routine non-zero status there
+    # must not print a failure.
+    run bash -c "source '$PROJECT_ROOT/lib/lib-review-loop'; i=0; (( i++ )); echo done"
+    assert_success
+    assert_output "done"
 }
 
 @test "run_antigravity sandboxes only read-only calls" {
