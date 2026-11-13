@@ -808,6 +808,18 @@ CLAUDE_STALE_EFFORT_PINS='(
 # ID, so "sonnet" tracks whichever Sonnet is current.
 CLAUDE_SUBAGENT_MODEL='sonnet'
 
+# Code Mode is opted into through the environment: Claude Code reads the flag
+# from the shell, --settings, or the user settings' env block (not project
+# settings). It is experimental, so tell the user what changed and how to undo it.
+print_code_mode_notice() {
+    echo ""
+    print_warning "Code Mode is on. It is experimental (Claude Code 2.1.323+):"
+    echo -e "  ${DIM}Claude writes JavaScript that calls its tools in one step instead of one call at a time.${NC}"
+    echo -e "  ${DIM}It needs a Claude 5.5 model or newer (Fable 5.2+); Claude Code warns at startup when it can't turn on.${NC}"
+    echo -e "  ${DIM}Turn it off: set CLAUDE_CODE_EXPERIMENTAL_CODE_MODE to \"0\" in ~/.claude/settings.json (env).${NC}"
+    echo -e "  ${DIM}Docs: https://code.claude.com/docs/en/code-mode${NC}"
+}
+
 configure_claude_settings() {
     local settings_file="$HOME/.claude/settings.json"
 
@@ -828,6 +840,7 @@ configure_claude_settings() {
     settings=$(cat "$settings_file")
     updated="$settings"
     local changed=false
+    local codemode_enabled=false
 
     # ── Check feature settings ──────────────────────────────────
     local feature_changes=()
@@ -860,6 +873,10 @@ configure_claude_settings() {
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_NO_FLICKER' &>/dev/null; then
         feature_changes+=("noflicker")
+    fi
+    # Any existing value, including "0", is the user's choice and is kept.
+    if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' &>/dev/null; then
+        feature_changes+=("codemode")
     fi
     # Only set a status line when none exists; a custom one gets a manual hint
     # below instead of being rewritten.
@@ -907,6 +924,7 @@ configure_claude_settings() {
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 effortpins)  echo -e "  • ${BOLD}modelSettings${NC}: remove the effort pins an earlier setup wrote (${stale_effort_pins}) so Claude Code's per-model defaults apply" ;;
                 noflicker)   echo -e "  • ${BOLD}CLAUDE_CODE_NO_FLICKER=1${NC}: flicker-free fullscreen rendering" ;;
+                codemode)    echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1${NC}: Code Mode (experimental), Claude writes JavaScript to call its tools" ;;
                 statusline)  echo -e "  • ${BOLD}statusLine${NC}: show model, context and 5h/7d plan usage; mirrors the quota to ~/.claude/rate_limits.json for skills" ;;
                 powershell)  echo -e "  • ${BOLD}CLAUDE_CODE_USE_POWERSHELL_TOOL=1${NC}: enable native PowerShell tool" ;;
             esac
@@ -926,6 +944,8 @@ configure_claude_settings() {
                                            | if .modelSettings[$k] == {} then del(.modelSettings[$k]) else . end)
                                        | if .modelSettings == {} then del(.modelSettings) else . end') ;;
                     noflicker)   updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_NO_FLICKER": "1"})') ;;
+                    codemode)    updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1"})')
+                                 codemode_enabled=true ;;
                     statusline)  updated=$(echo "$updated" | jq --arg cmd "$CLAUDE_STATUSLINE_CMD" '.statusLine = {"type": "command", "command": $cmd}') ;;
                     powershell)  updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"})') ;;
                 esac
@@ -961,6 +981,9 @@ configure_claude_settings() {
     if $changed; then
         echo "$updated" | jq . > "$settings_file"
         print_success "Claude Code settings updated"
+        if $codemode_enabled; then
+            print_code_mode_notice
+        fi
     else
         print_info "Skipped Claude Code settings"
     fi

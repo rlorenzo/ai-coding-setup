@@ -212,6 +212,35 @@ attribution() {
     assert_equal "$(jq -r '.env.CLAUDE_CODE_SUBAGENT_MODEL' "$HOME/.claude/settings.json")" "haiku"
 }
 
+# ---- code mode ------------------------------------------------------------
+
+@test "codemode: written when absent, with the notice" {
+    seed_settings '{"outputStyle":"Concise"}'
+    run_configure y
+    assert_success
+    assert_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1"
+    assert_output --partial "Code Mode is on. It is experimental"
+    assert_output --partial "Turn it off"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "1"
+}
+
+@test "codemode: an explicit opt-out is never overwritten" {
+    seed_settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"0"}}'
+    run_configure y
+    assert_success
+    refute_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1"
+    refute_output --partial "Code Mode is on"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "0"
+}
+
+@test "codemode: declining prints no notice and writes nothing" {
+    seed_settings '{"outputStyle":"Concise"}'
+    run_configure n
+    assert_success
+    refute_output --partial "Code Mode is on"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "unset"
+}
+
 # ---- classic review-gate hook removal -------------------------------------
 
 run_remove_gate() {
