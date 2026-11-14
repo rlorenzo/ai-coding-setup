@@ -11,6 +11,18 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 const INSTALLED = '/Users/dev/.local/bin/review-gate'
 
 /**
+ * A path as the hook asked for it, in POSIX form. On Windows the engine hands
+ * `fs.exists` the native spelling (`C:\Users\dev\...`), which would never
+ * equal INSTALLED and would leave every lookup quietly falling back to PATH.
+ *
+ * @param path the path `fs.exists` received
+ * @returns it without a drive letter and with forward slashes
+ */
+function posix(path: string): string {
+  return path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+}
+
+/**
  * The claude-shaped answer the script prints on a block.
  *
  * @param reason what it says
@@ -38,7 +50,7 @@ function world(on: Parameters<typeof mock.env>[0], stdout: string) {
   const consulted: string[] = []
 
   mock.env(on, { HOME: '/Users/dev' })
-  on('fs.exists', ($, e) => ({ value: e.path === INSTALLED }))
+  on('fs.exists', ($, e) => ({ value: posix(e.path) === INSTALLED }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', ($, e) => {
     consulted.push(JSON.parse(e.init?.stdin ?? '{}').tool_input?.command ?? '')
@@ -175,7 +187,7 @@ describe('register', () => {
   // start enforces nothing and blocks everything.
   test('a script that cannot be run lets the commit through', async ($, on) => {
     mock.env(on, { HOME: '/Users/dev' })
-    on('fs.exists', ($, e) => ({ value: e.path === INSTALLED }))
+    on('fs.exists', ($, e) => ({ value: posix(e.path) === INSTALLED }))
     on('session.cwd', () => ({ value: '/repo' }))
     on('process.run', () => {
       throw new Error('ENOENT')
@@ -202,9 +214,9 @@ describe('register', () => {
 
     mock.env(on, { HOME: '/Users/dev' })
     on('fs.exists', ($, e) => {
-      looked.push(e.path)
+      looked.push(posix(e.path))
 
-      return { value: e.path === INSTALLED }
+      return { value: posix(e.path) === INSTALLED }
     })
     on('session.cwd', () => ({ value: '/repo' }))
     on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
@@ -221,9 +233,9 @@ describe('register', () => {
 
     mock.env(on, { HOME: '', USERPROFILE: '/Users/dev' })
     on('fs.exists', ($, e) => {
-      looked.push(e.path)
+      looked.push(posix(e.path))
 
-      return { value: e.path === INSTALLED }
+      return { value: posix(e.path) === INSTALLED }
     })
     on('session.cwd', () => ({ value: '/repo' }))
     on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
