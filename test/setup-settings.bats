@@ -324,7 +324,7 @@ run_gate_mod() {
     cat > "$TEST_TMPDIR/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$CLAUDE_LOG"
-[[ "$1 $2" == "plugin list" ]] && echo "  > review-gate@ai-coding-setup"
+[[ "$1 $2" == "plugin list" ]] && echo "  ❯ review-gate@ai-coding-setup"
 exit 0
 STUB
     chmod +x "$TEST_TMPDIR/bin/claude"
