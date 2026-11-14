@@ -24,7 +24,7 @@ run_switch() { # run_switch <want> <other>
 echo "$*" >> "$CLAUDE_LOG"
 case "$1 $2" in
     "plugin list")
-        for p in $CLAUDE_INSTALLED; do echo "  > $p@ai-coding-setup"; done ;;
+        for p in $CLAUDE_INSTALLED; do echo "  ❯ $p@ai-coding-setup"; done ;;
     "plugin install")
         [[ -z "${CLAUDE_INSTALL_FAILS:-}" ]] ;;
 esac

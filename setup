@@ -669,7 +669,7 @@ CLAUDE_EXPLORE_MOD_CONFIG=(--config "model=haiku" --config "agents=Explore"
     --config "notice=false")
 
 claude_plugin_installed() {
-    claude plugin list 2>/dev/null | grep -qE "^[[:space:]]*> $1@"
+    claude plugin list 2>/dev/null | grep -qE "^[[:space:]]*(>|❯) $1@"
 }
 
 # Removes the other route, but only when it is actually installed: an
