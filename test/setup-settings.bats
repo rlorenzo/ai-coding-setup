@@ -212,6 +212,24 @@ attribution() {
     assert_equal "$(jq -r '.env.CLAUDE_CODE_SUBAGENT_MODEL' "$HOME/.claude/settings.json")" "haiku"
 }
 
+# ---- agent teams ----------------------------------------------------------
+
+@test "teams: never added to fresh settings" {
+    seed_settings '{"outputStyle":"Concise"}'
+    run_configure y
+    assert_success
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$HOME/.claude/settings.json")" "null"
+}
+
+@test "teams: the value an earlier setup wrote is removed" {
+    seed_settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"1"}}'
+    run_configure y
+    assert_success
+    assert_output --partial "can't run alongside Code Mode"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$HOME/.claude/settings.json")" "null"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "1"
+}
+
 # ---- code mode ------------------------------------------------------------
 
 @test "codemode: written when absent, with the notice" {
