@@ -854,7 +854,9 @@ configure_claude_settings() {
     ' &>/dev/null; then
         feature_changes+=("attribution")
     fi
-    if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' &>/dev/null; then
+    # Earlier versions of setup wrote AGENT_TEAMS=1, which blocks Code Mode
+    # (Claude Code can't run both yet). Offer to remove that value.
+    if echo "$settings" | jq -e '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS == "1"' &>/dev/null; then
         feature_changes+=("teams")
     fi
     if ! echo "$settings" | jq -e '.env.CLAUDE_CODE_SUBAGENT_MODEL' &>/dev/null; then
@@ -919,7 +921,7 @@ configure_claude_settings() {
         for change in "${feature_changes[@]}"; do
             case "$change" in
                 attribution) echo -e "  • ${BOLD}attribution${NC}: disable commit/PR/session attribution tags" ;;
-                teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1${NC}: enable agent teams" ;;
+                teams)       echo -e "  • ${BOLD}CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS${NC}: remove it; agent teams can't run alongside Code Mode" ;;
                 subagentmodel) echo -e "  • ${BOLD}CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT_MODEL}${NC}: default subagents to a cheaper tier; agent definitions and spawn calls still override it" ;;
                 outputstyle) echo -e "  • ${BOLD}outputStyle=Concise${NC}: lead with results, skip preamble and narration" ;;
                 effortpins)  echo -e "  • ${BOLD}modelSettings${NC}: remove the effort pins an earlier setup wrote (${stale_effort_pins}) so Claude Code's per-model defaults apply" ;;
@@ -934,7 +936,7 @@ configure_claude_settings() {
             for change in "${feature_changes[@]}"; do
                 case "$change" in
                     attribution) updated=$(echo "$updated" | jq '.attribution = ((.attribution // {}) + {"commit": "", "pr": "", "sessionUrl": false})') ;;
-                    teams)       updated=$(echo "$updated" | jq '.env = ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})') ;;
+                    teams)       updated=$(echo "$updated" | jq 'del(.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)') ;;
                     subagentmodel) updated=$(echo "$updated" | jq --arg m "$CLAUDE_SUBAGENT_MODEL" \
                                        '.env = ((.env // {}) + {"CLAUDE_CODE_SUBAGENT_MODEL": $m})') ;;
                     outputstyle) updated=$(echo "$updated" | jq '.outputStyle = "Concise"') ;;
