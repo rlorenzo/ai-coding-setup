@@ -555,19 +555,24 @@ gh stack merge         # merge one or more PRs, bottom-up
 
 `setup` can also install [Impeccable](https://impeccable.style), a **third-party** design skill set for AI coding agents. It gives your agent a shared design vocabulary and commands (typography, color, motion, layout, polish, and AI-slop detection), with a build tailored to each harness. It is unrelated to the commands this repo ships.
 
-For the selected tools it supports (Claude Code, Codex CLI, Copilot CLI), `setup` offers to run one command covering them all:
+For Claude Code, `setup` installs (or updates) the Impeccable plugin from the `pbakaus/impeccable` marketplace. The plugin carries its own hooks at user scope, so they apply in every project.
+
+For Codex CLI and Copilot CLI, it runs one npx command covering both:
 
 ```bash
-npx impeccable@4.1.0 install --providers=claude,codex,github --scope=global
+npx impeccable@4.1.0 install --providers=codex,github --scope=global
 ```
 
-The version is pinned in `setup` (`IMPECCABLE_PKG`) because the installer writes hooks into `~/.claude` and `~/.codex`; bump it deliberately. Because it runs via `npx` with explicit `--providers`/`--scope`, re-running `setup` and accepting this step refreshes an existing install and adds any newly-selected agents. There is no separate detect-and-update branch (unlike the `gh` skill above), since `install` with explicit providers is already idempotent and provider-aware.
+Claude is left out of the npx command on purpose. Having both installed puts every Impeccable skill and agent in Claude Code twice, and on each run the npx installer appended another copy of its hooks to the project settings of the directory it ran from, with Windows backslash paths its launcher cannot resolve (exit 127 on Stop). If an earlier `setup` ran the npx install for Claude, remove that copy: `~/.claude/skills/impeccable`, `~/.claude/agents/impeccable-*.md`, and the Impeccable hooks in `.claude/settings.local.json` of the repo you ran `setup` from.
+
+The npx version is pinned in `setup` (`IMPECCABLE_PKG`) because the installer writes hooks into `~/.codex`; bump it deliberately. Re-running `setup` and accepting this step refreshes both installs and adds any newly-selected agents.
 
 Antigravity CLI and Kimi Code CLI have no Impeccable provider, so they are skipped. This step needs `npx` (Node.js). To manage Impeccable yourself:
 
 ```bash
-npx impeccable install --providers=claude --scope=global   # install for one provider
-npx impeccable update                                       # update
+claude plugin update impeccable@impeccable                 # update the Claude Code plugin
+npx impeccable install --providers=codex --scope=global    # install for one provider
+npx impeccable update                                       # update the npx installs
 ```
 
 See [impeccable.style](https://impeccable.style) for the full command list and the Claude Code plugin install (`/plugin marketplace add pbakaus/impeccable`).
