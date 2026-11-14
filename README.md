@@ -74,7 +74,7 @@ The marketplace holds three plugins:
 | `ai-coding-setup` | The seven commands | Nothing |
 | `explore-agent` | The Explore subagent as an agent file that shadows the built-in | Nothing |
 | [`explore-model`](mods/explore-model) | The same pinning as an `agent.spawn` function hook, with no shadow | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
-| [`review-gate`](mods/review-gate) | The review gate as a `tool.check` function hook | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
+| [`review-gate`](mods/review-gate) | The review gate as a `tool.check` function hook | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, Code Mode off |
 
 `explore-agent` and `explore-model` do the same job two ways and you want exactly one of them; see [Explore](#explore). `setup` installs whichever your session can run and removes the other.
 
@@ -272,6 +272,8 @@ That last point is why the mod does **not** keep receipts in the engine's own `$
 The script's own modes still decide everything else: `REVIEW_GATE=off` and the `AI_REVIEW_GATE=off` bypass work exactly as they do without the mod, and in `warn` mode the gate's reasoning goes to the transcript instead of a stderr nobody reads.
 
 Install the two together and the script runs twice for one commit, issuing a second single-use nonce that invalidates the first, so `setup` removes the `PreToolUse` entry when it installs the mod.
+
+**Not with Code Mode.** [Code Mode](#how-it-works) won't start while a mod checks tool calls, and Claude Code falls back to the ordinary tools with a warning at startup. When `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, `setup` skips the mod, uninstalls it if it is already there, and wires the `PreToolUse` hook instead. The rules and receipts are the same either way; you lose the in-process fast path and the `ask` answer for a blocked commit.
 
 ```bash
 claude plugin install review-gate@ai-coding-setup --scope user \
@@ -487,7 +489,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - The Claude Code settings step offers a set of read-only permissions (`git status`, `cat`, `grep`, and similar). The file readers match any path, not just the project, so the set deliberately leaves out `WebFetch`, `WebSearch` and `git ls-remote`: read-anywhere plus fetch-anywhere lets an injected instruction read a secret and send it out without a prompt. To skip the prompt for docs you fetch often, add scoped rules such as `WebFetch(domain:docs.example.com)` to `permissions.allow` in `~/.claude/settings.json`. Earlier versions of `setup` added bare `WebFetch` and `WebSearch`; remove them by hand if you want the tighter default.
-- The same step turns on [Code Mode](https://code.claude.com/docs/en/code-mode) by writing `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` to the `env` block of `~/.claude/settings.json`, and prints a notice when it does. Code Mode is experimental (Claude Code 2.1.323+): Claude writes JavaScript that calls its tools, so a multi-step task takes fewer round trips and less context. It needs a Claude 5.5 model or newer (Fable 5.2+), and Claude Code warns at startup when it can't turn on. Claude Code reads the flag only from your shell, `--settings`, or user settings, not from a project's settings. To opt out, set the value to `"0"`; `setup` never overwrites an existing value. Code Mode can't run alongside agent teams yet, so `setup` also offers to remove the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` that earlier versions wrote.
+- The same step turns on [Code Mode](https://code.claude.com/docs/en/code-mode) by writing `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` to the `env` block of `~/.claude/settings.json`, and prints a notice when it does. Code Mode is experimental (Claude Code 2.1.323+): Claude writes JavaScript that calls its tools, so a multi-step task takes fewer round trips and less context. It needs a Claude 5.5 model or newer (Fable 5.2+), and Claude Code warns at startup when it can't turn on. Claude Code reads the flag only from your shell, `--settings`, or user settings, not from a project's settings. To opt out, set the value to `"0"`; `setup` never overwrites an existing value. Code Mode can't run alongside agent teams yet, so `setup` also offers to remove the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` that earlier versions wrote. It can't run beside a mod that checks tool calls either, so with Code Mode on, `setup` wires the review gate as a `PreToolUse` hook rather than the [`review-gate` mod](#review-gate-mod).
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
 - On each run the script also offers to prune stale installs: any command it previously installed (identified by that same marker) that no longer exists in the repo can be removed, so renamed or deleted commands clean themselves up. It asks before each removal (default No, so nothing is dropped without your say-so), or pass `--force` to prune without prompting. Your own unmarked commands are never touched.
 

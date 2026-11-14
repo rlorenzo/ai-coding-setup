@@ -689,6 +689,14 @@ claude_function_hooks_enabled() {
         '(.env[$k] // "") == "1"' "$settings_file" &>/dev/null
 }
 
+# Code Mode refuses to start while a mod checks tool calls (a tool.check hook),
+# so anything installing one asks this first.
+claude_code_mode_enabled() {
+    local settings_file="$HOME/.claude/settings.json"
+    [[ -f "$settings_file" ]] || return 1
+    jq -e '(.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "") == "1"' "$settings_file" &>/dev/null
+}
+
 # Writes the flag into settings.json rather than asking the user to export it,
 # so it survives a new terminal. Returns 1 when the file is unusable, so the
 # caller falls back to the agent rather than installing a mod that never loads.
@@ -1536,6 +1544,13 @@ remove_classic_review_gate_hook() {
 # Returns 0 when the mod is installed and the caller should not wire the
 # classic hook.
 install_review_gate_mod() {
+    # The mod is a tool.check hook, and Code Mode will not run beside one. The
+    # PreToolUse hook enforces the same rules from the same script, so Code Mode
+    # wins and an installed mod is swapped out for it.
+    if claude_code_mode_enabled; then
+        claude_plugin_drop "$CLAUDE_REVIEW_GATE_MOD" "the PreToolUse hook (Code Mode is on)"
+        return 1
+    fi
     claude_function_hooks_enabled || return 1
     claude_plugin_supported || return 1
 
