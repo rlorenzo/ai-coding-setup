@@ -24,7 +24,10 @@ case "$1 $2" in
         for p in ${CLAUDE_INSTALLED:-}; do echo "  ❯ $p@impeccable"; done ;;
 esac
 STUB
-    printf '#!/usr/bin/env bash\necho "npx $*" >> "$STUB_LOG"\n' > "$TEST_TMPDIR/bin/npx"
+    cat > "$TEST_TMPDIR/bin/npx" <<'STUB'
+#!/usr/bin/env bash
+echo "npx $*" >> "$STUB_LOG"
+STUB
     chmod +x "$TEST_TMPDIR/bin/claude" "$TEST_TMPDIR/bin/npx"
     export STUB_LOG="$TEST_TMPDIR/stub.log"
     : > "$STUB_LOG"
