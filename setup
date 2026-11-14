@@ -669,7 +669,7 @@ CLAUDE_EXPLORE_MOD_CONFIG=(--config "model=haiku" --config "agents=Explore"
     --config "notice=false")
 
 claude_plugin_installed() {
-    claude plugin list 2>/dev/null | grep -qE "^[[:space:]]*> $1@"
+    claude plugin list 2>/dev/null | grep -qE "^[[:space:]]*(>|❯) $1@"
 }
 
 # Removes the other route, but only when it is actually installed: an
@@ -1292,25 +1292,52 @@ configure_gh_stack_extension() {
 # Map an internal tool name to its Impeccable `--providers` id.
 # Only tools Impeccable supports are mapped; Antigravity and Kimi Code have no
 # provider, so they are omitted (return empty) and skipped by the caller.
+# Claude Code is omitted too: it gets the Impeccable plugin instead (see
+# install_impeccable_plugin), and running both installs every skill twice.
 impeccable_provider_id() {
     case "$1" in
-        claude)  echo "claude" ;;
         codex)   echo "codex" ;;
         copilot) echo "github" ;;
     esac
 }
 
+# Installs or updates the Impeccable plugin for Claude Code. The plugin ships
+# its own hooks at user scope; the npx installer instead appended a fresh copy
+# of its hooks to the project settings of whatever directory it ran from on
+# every run, with backslash paths its launcher cannot resolve on Windows.
+install_impeccable_plugin() {
+    if ! claude_plugin_supported; then
+        print_warning "This Claude Code has no plugin support; skipping Impeccable for Claude"
+        return
+    fi
+    if ! claude plugin marketplace list 2>/dev/null | grep -qE '^[[:space:]]*(>|❯) impeccable$'; then
+        claude plugin marketplace add pbakaus/impeccable || {
+            print_warning "Could not add the Impeccable marketplace"
+            return
+        }
+    fi
+    if claude_plugin_installed impeccable; then
+        claude plugin marketplace update impeccable &>/dev/null
+        claude plugin update impeccable@impeccable \
+            && print_success "Updated the Impeccable plugin for Claude Code"
+    else
+        claude plugin install impeccable@impeccable --scope user --yes \
+            && print_success "Installed the Impeccable plugin for Claude Code"
+    fi
+}
+
 # Offer to install the Impeccable design skills for the selected agents.
 configure_impeccable_skills() {
     # Build a de-duplicated, comma-separated provider list from selected tools.
-    local providers="" tool pid
+    local providers="" tool pid want_claude=false
     for tool in "${selected_tools[@]}"; do
+        [[ "$tool" == claude ]] && want_claude=true
         pid=$(impeccable_provider_id "$tool")
         [[ -z "$pid" ]] && continue
         [[ ",$providers," == *",$pid,"* ]] && continue
         providers="${providers:+$providers,}$pid"
     done
-    [[ -z "$providers" ]] && return
+    [[ -z "$providers" ]] && ! $want_claude && return
 
     echo ""
     echo -e "${BOLD}── Impeccable design skills ──${NC}"
@@ -1318,11 +1345,15 @@ configure_impeccable_skills() {
     echo "  Install or update the Impeccable design skills (https://impeccable.style)?"
     echo "  A shared design vocabulary and commands for your agent: typography,"
     echo "  color, motion, layout, polish, and AI-slop detection."
-    echo "  Runs via npx at a pinned version, so re-running refreshes an existing"
-    echo "  install and adds any newly-selected agents:"
-    echo "    npx ${IMPECCABLE_PKG} install --providers=${providers} --scope=global"
+    $want_claude && echo "  Claude Code: the Impeccable plugin (pbakaus/impeccable marketplace)"
+    [[ -n "$providers" ]] && {
+        echo "  Other agents, via npx at a pinned version:"
+        echo "    npx ${IMPECCABLE_PKG} install --providers=${providers} --scope=global"
+    }
     echo ""
     if prompt_yes_no "  Install/update Impeccable skills?"; then
+        $want_claude && install_impeccable_plugin
+        [[ -z "$providers" ]] && return
         if ! command -v npx &>/dev/null; then
             print_warning "npx not found; install Node.js to use Impeccable skills"
             return
