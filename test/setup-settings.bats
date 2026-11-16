@@ -227,36 +227,39 @@ attribution() {
     assert_success
     assert_output --partial "can't run alongside Code Mode"
     assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$HOME/.claude/settings.json")" "null"
-    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "1"
 }
 
 # ---- code mode ------------------------------------------------------------
 
-@test "codemode: written when absent, with the notice" {
+@test "codemode: never added to fresh settings" {
     seed_settings '{"outputStyle":"Concise"}'
     run_configure y
     assert_success
-    assert_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1"
-    assert_output --partial "Code Mode is on. It is experimental"
-    assert_output --partial "Turn it off"
-    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "1"
+    refute_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "unset"
 }
 
-@test "codemode: an explicit opt-out is never overwritten" {
+@test "codemode: the value an earlier setup wrote is removed" {
+    seed_settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}'
+    run_configure y
+    assert_success
+    assert_output --partial "Code Mode turns off Remote Control"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "unset"
+}
+
+@test "codemode: an explicit opt-out is left alone" {
     seed_settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"0"}}'
     run_configure y
     assert_success
-    refute_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1"
-    refute_output --partial "Code Mode is on"
-    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE' "$HOME/.claude/settings.json")" "0"
+    refute_output --partial "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "0"
 }
 
-@test "codemode: declining prints no notice and writes nothing" {
-    seed_settings '{"outputStyle":"Concise"}'
+@test "codemode: declining keeps the value" {
+    seed_settings '{"env":{"CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}'
     run_configure n
     assert_success
-    refute_output --partial "Code Mode is on"
-    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "unset"
+    assert_equal "$(jq -r '.env.CLAUDE_CODE_EXPERIMENTAL_CODE_MODE // "unset"' "$HOME/.claude/settings.json")" "1"
 }
 
 # ---- classic review-gate hook removal -------------------------------------
