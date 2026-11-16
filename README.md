@@ -53,8 +53,8 @@ The script detects which AI tools you have installed and walks you through insta
 
 | Tool | Command format | Source directory | Installs to |
 | --- | --- | --- | --- |
-| Claude Code | Plugin (`.claude-plugin/`) | `.claude/commands/`, `plugins/`, `mods/` | loaded in place from the clone |
-| Claude Code (copy fallback) | Markdown (`.md`) | `.claude/commands/`, `plugins/explore-agent/agents/` | `~/.claude/commands/`, `~/.claude/agents/` |
+| Claude Code | Plugin (`.claude-plugin/`) | `.claude/commands/`, `mods/` | loaded in place from the clone |
+| Claude Code (copy fallback) | Markdown (`.md`) | `.claude/commands/` | `~/.claude/commands/` |
 | Codex CLI | Agent Skills (`SKILL.md`) | `.codex/skills/` | `~/.codex/skills/` |
 | Copilot CLI | Agent Skills (`SKILL.md`) | `.copilot/skills/` | `~/.copilot/skills/` |
 | Antigravity CLI | Unified Plugin (`plugin.json`) | `.antigravity/` | `~/.gemini/antigravity-cli/plugins/ai-coding-setup/` |
@@ -67,27 +67,24 @@ Kimi Code reads its user-level data from `$KIMI_CODE_HOME` when that variable is
 
 Claude Code is the one harness here with a plugin system of its own, and `setup` uses it by default: instead of copying seven Markdown files into `~/.claude/commands/`, it registers this clone as a marketplace and installs from it.
 
-The marketplace holds three plugins:
+The marketplace holds two plugins:
 
 | Plugin | What it is | Needs |
 | --- | --- | --- |
 | `ai-coding-setup` | The seven commands | Nothing |
-| `explore-agent` | The Explore subagent as an agent file that shadows the built-in | Nothing |
-| [`explore-model`](mods/explore-model) | The same pinning as an `agent.spawn` function hook, with no shadow | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` |
 | [`review-gate`](mods/review-gate) | The review gate as a `tool.check` function hook | `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, Code Mode off |
 
-`explore-agent` and `explore-model` do the same job two ways and you want exactly one of them; see [Explore](#explore). `setup` installs whichever your session can run and removes the other.
+`setup` installs `ai-coding-setup` and offers the mod where your session can run it.
 
 ```bash
 claude plugin marketplace add ./          # from inside the clone
 claude plugin install ai-coding-setup@ai-coding-setup --scope user
-claude plugin install explore-agent@ai-coding-setup --scope user
 ```
 
 Three things are better this way:
 
 - **Updates are a `git pull`.** The plugin loads in place from the clone, so pulling new commands makes them live at the next session start. The copy path needs another `./setup` run to notice.
-- **Removal is one command.** `claude plugin uninstall ai-coding-setup` takes all seven commands and the agent with it, where the copies have to be deleted one by one.
+- **Removal is one command.** `claude plugin uninstall ai-coding-setup` takes all seven commands with it, where the copies have to be deleted one by one.
 - **Nothing is written into `~/.claude/commands/`.** A command of your own that happens to share a name is never shadowed, and the source markers and stale-orphan pruning the copy path needs stop mattering.
 
 The trade-off is that the plugin loads *in place*: move or delete the clone and the commands go with it. A copy would have survived. If that matters more than live updates, answer `n` at the plugin prompt and `setup` falls back to copying, exactly as before. Either way it offers to remove whichever set it did not install, so no command is ever listed twice.
@@ -189,66 +186,18 @@ Rewrite a feature branch's git history into focused, logical commits before revi
 - Antigravity CLI: `/git-history-cleanup [BRANCH]`
 - Kimi Code CLI: `/skill:git-history-cleanup [BRANCH]`
 
-## Claude Code Agents
-
-The subagent definitions ship as the `explore-agent` plugin, from [plugins/explore-agent/agents/](plugins/explore-agent/agents/); on the copy path `setup` installs them to `~/.claude/agents/`. These are Claude Code-only (the other harnesses have no equivalent mechanism).
-
-They sit at that plugin's root rather than under `.claude/` because the root `agents/` directory is the only place Claude Code loads plugin agents from. The manifest's `agents` key accepts a list of file paths, `claude plugin validate --strict` passes, the install succeeds, and yet the agent is silently missing from the loaded plugin. So no manifest here names an `agents` key at all, and `test/plugin-manifest.bats` fails if one is added.
-
-### Explore
-
-Since Claude Code v2.1.198 the built-in `Explore` subagent [inherits your main-session model](https://code.claude.com/docs/en/sub-agents) instead of always running on Haiku (capped at Opus on the Claude API). If your daily driver is Opus or Fable, every background codebase search Claude spontaneously delegates bills at that tier. This agent shadows the built-in (a user-level agent with the same name overrides it, which the docs explicitly support) and pins exploration back to `haiku` at `effort: low` with read-only tools.
-
-Trade-off to know about: a custom `Explore` loads your `CLAUDE.md`/user memory like any subagent, which the built-in skips for speed. That is the cost the [`explore-model`](#explore-model) mod exists to remove. To remove the agent, `claude plugin uninstall explore-agent`, or delete `~/.claude/agents/Explore.md` if you took the copy path.
-
-#### explore-agent or explore-model
-
-They pin the same thing two ways, and **you want exactly one**:
-
-| | `explore-agent` | `explore-model` |
-| --- | --- | --- |
-| How | An agent file that shadows the built-in | An `agent.spawn` hook that sets the spawn's model |
-| Loads `CLAUDE.md` on every search | Yes | No |
-| Keeps the built-in's definition | No, replaces it | Yes |
-| Needs function hooks | No | Yes |
-
-Install both and you get neither's benefit: the spawn resolves to your shadow definition rather than the built-in, so the `CLAUDE.md` load is back and the hook has nothing left to improve. `setup` installs one and uninstalls the other, and re-running it after you enable function hooks switches you over.
-
 ## Mods
 
 A [mod](https://github.com/anthropics/claude-code/tree/main/mods) is a Claude Code plugin whose behavior is a **hooks module**: TypeScript loaded into the engine, one `register(on, options)` entry whose hooks are `($, e, next)` functions wrapping an engine event, Express-middleware style. Where a classic hook is a shell command spawned after the fact, a function hook can rewrite the event, answer it, or refuse it, in process.
 
-Four ship inside Claude Code (`sec-default`, `diff`, `telemetry`, `agents-md`). The ones here live in [mods/](mods/).
+Four ship inside Claude Code (`sec-default`, `diff`, `telemetry`, `agents-md`). The one here lives in [mods/](mods/).
 
-**Early access.** Hooks modules load only when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` is set, on Claude Code 2.1.260 or newer, and upstream says the API they are written against may change between releases without notice. `setup` offers to write the flag into `~/.claude/settings.json`, and defaults to No: nothing else in this repo depends on an unreleased API, and a mod that stops loading after an update is a worse surprise than an agent file that never does.
+**Early access.** Hooks modules load only when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` is set, on Claude Code 2.1.260 or newer, and upstream says the API they are written against may change between releases without notice. `setup` never sets the flag; add it to the `env` block of `~/.claude/settings.json` yourself. Nothing else in this repo depends on an unreleased API.
 
 Two things are worth knowing when you install one:
 
 - `claude plugin details <mod>` reports `Hooks (0)`. The inventory counts classic hook matchers; a function-hooks module is not one, so the count reads zero even for a module that loads and fires. It is not a sign the mod is broken.
-- A mod's tests run against a mock engine in a child of the `claude` binary, with no credentials and no home directory: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/explore-model`. CI runs them for every mod; `test/plugin-manifest.bats` runs the same command locally and skips where `claude` is absent.
-
-### explore-model
-
-Pins the model that background recon subagents run on, by hooking `agent.spawn` and setting the spawn's `model`.
-
-This is the same goal as the [`explore-agent`](#explore) plugin and a better way to reach it. The agent file has to *replace* the built-in `Explore` definition to change its model, and a replacement is loaded like any other subagent, so it drags in your `CLAUDE.md` and user memory on every search, which the built-in skips for speed. The hook sets one field on the spawn and leaves the built-in definition running, so there is no shadow and no extra load.
-
-Two spawns are handed straight through. A **fork** inherits its parent's context and model and ignores `model` outright, so rewriting it would only misdescribe what happens. A spawn that **named its own model** was an explicit choice by the caller, and the case the hook is here to decide is the one nobody decided.
-
-It is also the enforcement `/efficient-orchestration` currently has to ask for: that skill instructs the model to pin a model on every spawn, which is a prompt-level plea the model can forget on exactly the code path where forgetting is expensive. The hook makes it an engine-level invariant instead.
-
-| Option | Default | Effect |
-| --- | --- | --- |
-| `model` | `haiku` | The alias or id the named agents run on. Prefer an alias: it tracks whichever model answers to that name, where a dated id stops applying the day the next one ships. `inherit` registers no hook at all. |
-| `agents` | `Explore` | The subagent types this applies to. Only read-only recon agents belong here: a pinned agent runs on `model` whatever its own definition asks for. |
-| `notice` | `false` | Attach a one-line notice to each spawn the hook pins. Off by default, since the point is to be invisible; turn it on to confirm the mod is loaded and firing. |
-
-```bash
-claude plugin install explore-model@ai-coding-setup --scope user \
-    --config model=haiku --config agents=Explore --config notice=false
-```
-
-Note that this is a floor on cost, not the only one: `setup` also offers `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`, which is the fallback tier for *every* subagent. The mod is the narrower, cheaper pin for the one agent Claude dispatches on its own.
+- A mod's tests run against a mock engine in a child of the `claude` binary, with no credentials and no home directory: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/review-gate`. CI runs them for every mod; `test/plugin-manifest.bats` runs the same command locally and skips where `claude` is absent.
 
 ### review-gate mod
 
@@ -273,7 +222,7 @@ The script's own modes still decide everything else: `REVIEW_GATE=off` and the `
 
 Install the two together and the script runs twice for one commit, issuing a second single-use nonce that invalidates the first, so `setup` removes the `PreToolUse` entry when it installs the mod.
 
-**Not with Code Mode.** [Code Mode](#how-it-works) won't start while a mod checks tool calls, and Claude Code falls back to the ordinary tools with a warning at startup. When `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, `setup` skips the mod, uninstalls it if it is already there, and wires the `PreToolUse` hook instead. The rules and receipts are the same either way; you lose the in-process fast path and the `ask` answer for a blocked commit.
+**Not with Code Mode.** [Code Mode](#how-it-works) won't start while a mod hooks tool calls or subagent spawns (`tool.check`, `tool.call` and `agent.spawn` all count), and Claude Code falls back to the ordinary tools with a warning at startup. When `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` is set, `setup` skips the mod, uninstalls it if it is already there, and wires the `PreToolUse` hook instead. The rules and receipts are the same either way; you lose the in-process fast path and the `ask` answer for a blocked commit.
 
 ```bash
 claude plugin install review-gate@ai-coding-setup --scope user \
@@ -489,7 +438,7 @@ Both loops are driven by agent-agnostic prompts in [prompts/](prompts/), not int
 - The `setup` script copies selected commands to the appropriate user-level directory for each tool.
 - Shared prompts are installed to `~/.local/share/ai-coding-setup/prompts/` and referenced by the review loop scripts.
 - The Claude Code settings step offers a set of read-only permissions (`git status`, `cat`, `grep`, and similar). The file readers match any path, not just the project, so the set deliberately leaves out `WebFetch`, `WebSearch` and `git ls-remote`: read-anywhere plus fetch-anywhere lets an injected instruction read a secret and send it out without a prompt. To skip the prompt for docs you fetch often, add scoped rules such as `WebFetch(domain:docs.example.com)` to `permissions.allow` in `~/.claude/settings.json`. Earlier versions of `setup` added bare `WebFetch` and `WebSearch`; remove them by hand if you want the tighter default.
-- The same step turns on [Code Mode](https://code.claude.com/docs/en/code-mode) by writing `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` to the `env` block of `~/.claude/settings.json`, and prints a notice when it does. Code Mode is experimental (Claude Code 2.1.323+): Claude writes JavaScript that calls its tools, so a multi-step task takes fewer round trips and less context. It needs a Claude 5.5 model or newer (Fable 5.2+), and Claude Code warns at startup when it can't turn on. Claude Code reads the flag only from your shell, `--settings`, or user settings, not from a project's settings. To opt out, set the value to `"0"`; `setup` never overwrites an existing value. Code Mode can't run alongside agent teams yet, so `setup` also offers to remove the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` that earlier versions wrote. It can't run beside a mod that checks tool calls either, so with Code Mode on, `setup` wires the review gate as a `PreToolUse` hook rather than the [`review-gate` mod](#review-gate-mod).
+- The same step turns on [Code Mode](https://code.claude.com/docs/en/code-mode) by writing `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1` to the `env` block of `~/.claude/settings.json`, and prints a notice when it does. Code Mode is experimental (Claude Code 2.1.323+): Claude writes JavaScript that calls its tools, so a multi-step task takes fewer round trips and less context. It needs a Claude 5.5 model or newer (Fable 5.2+), and Claude Code warns at startup when it can't turn on. Claude Code reads the flag only from your shell, `--settings`, or user settings, not from a project's settings. To opt out, set the value to `"0"`; `setup` never overwrites an existing value. Code Mode can't run alongside agent teams yet, so `setup` also offers to remove the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` that earlier versions wrote. It can't run beside a mod that hooks tool calls or subagent spawns either, so with Code Mode on, `setup` wires the review gate as a `PreToolUse` hook rather than the [`review-gate` mod](#review-gate-mod).
 - Installed commands are tagged with a source marker so the script can safely update them later without overwriting your custom commands that happen to share the same name.
 - On each run the script also offers to prune stale installs: any command it previously installed (identified by that same marker) that no longer exists in the repo can be removed, so renamed or deleted commands clean themselves up. It asks before each removal (default No, so nothing is dropped without your say-so), or pass `--force` to prune without prompting. Your own unmarked commands are never touched.
 
@@ -617,7 +566,7 @@ style here:
 
 Delete the command/skill from the corresponding directory (or uninstall the plugin for Antigravity):
 
-- Claude: `claude plugin uninstall ai-coding-setup` (and `explore-agent` or `explore-model`, whichever you have), then `claude plugin marketplace remove ai-coding-setup`. On the copy path, delete from `~/.claude/commands/` (agents: `~/.claude/agents/`)
+- Claude: `claude plugin uninstall ai-coding-setup` (and `review-gate`, if you have it), then `claude plugin marketplace remove ai-coding-setup`. On the copy path, delete from `~/.claude/commands/`
 - Codex: `~/.codex/skills/`
 - Copilot: `~/.copilot/skills/`
 - Antigravity: Run `agy plugin uninstall ai-coding-setup`
@@ -666,7 +615,7 @@ Each installed agent is tested as both editor (can it modify a file?) and review
 
 This repo uses [pre-commit](https://pre-commit.com/) to run linters locally before each commit. Install it once and you'll get automatic checks for shell scripts (shellcheck), markdown (markdownlint), TOML syntax, the BATS suite, and a SkillSpector security scan of the skills this repo publishes.
 
-Because of that last one the hook environment needs Python 3.12 through 3.15. If yours is outside that range, pre-commit fails while building the hook's venv; `SKIP=skillspector-skills,skillspector-agent git commit ...` gets you past it, and CI runs the scan either way.
+Because of that last one the hook environment needs Python 3.12 through 3.15. If yours is outside that range, pre-commit fails while building the hook's venv; `SKIP=skillspector-skills git commit ...` gets you past it, and CI runs the scan either way.
 
 ```bash
 pip install pre-commit   # or: brew install pre-commit (macOS)
@@ -685,13 +634,12 @@ If you skip the local setup, the same checks run in CI on your pull request.
 
 The skills in this repo are meant to be installed into other people's agents, where they run with whatever trust that agent has. [SkillSpector](https://github.com/NVIDIA/skillspector), NVIDIA's security scanner for agent skills, checks them for prompt injection, hidden instructions, data exfiltration, tool misuse, and supply-chain risk before they leave here.
 
-Two pre-commit hooks run it, and the `Lint` workflow runs every pre-commit hook over every file, so the scan gates pull requests too. There is no separate security workflow.
+A pre-commit hook runs it, and the `Lint` workflow runs every pre-commit hook over every file, so the scan gates pull requests too. There is no separate security workflow.
 
 - It runs with `--no-llm`, the static analyzers only. The semantic ones want an API key that neither a laptop nor CI has, and SkillSpector skips them with a warning rather than failing.
 - The gate is the exit code: `0` for `SAFE` or `CAUTION`, `1` for `DO_NOT_INSTALL` (a risk score above 50), `2` for an error. Only a genuinely bad score blocks a commit. The `CAUTION` findings print and let you through, which is the intent: `git-history-cleanup` scores 25 for the `git reset --hard` and `--force-with-lease` in its own instructions, and a skill about rewriting history is going to mention rewriting history.
 - The dependency is pinned to commit `ae1cdf2` on `main`, the change that added Python 3.15 support. No tagged release includes it yet (`v2.13.3` still caps at `<3.15`), so move the pin to the first release that does. SkillSpector is not on PyPI, so it installs from a git URL, and a tag can be moved where a commit cannot.
 - Only the Codex copies of the skills are scanned. `tools/generate` renders every harness from the canonical `.claude/commands/` sources and the `generated-files-in-sync` hook proves they match, so the bodies are byte-identical and scanning four copies would buy three more runs and nothing else.
-- `plugins/explore-agent/agents/` is not a skill directory, so the second hook names its files directly. The scanner takes one path per run, so each agent needs its own hook; `test/skillspector-hooks.bats` fails if one is added without one.
 
 To run it by hand:
 

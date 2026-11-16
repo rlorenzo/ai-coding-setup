@@ -21,30 +21,6 @@
       ]
     },
     {
-      "name": "explore-agent",
-      "source": "./plugins/explore-agent",
-      "description": "The Explore subagent pinned to haiku by a shadowing agent definition. For sessions without function hooks; explore-model supersedes it where those are on. Installing both gives you neither's benefit.",
-      "category": "productivity",
-      "keywords": [
-        "cost",
-        "subagent",
-        "model",
-        "explore"
-      ]
-    },
-    {
-      "name": "explore-model",
-      "source": "./mods/explore-model",
-      "description": "An agent.spawn function hook that pins the Explore subagent to a cheap model, so background codebase searches stop billing at the main session's tier. Needs CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1.",
-      "category": "productivity",
-      "keywords": [
-        "cost",
-        "subagent",
-        "model",
-        "explore"
-      ]
-    },
-    {
       "name": "review-gate",
       "source": "./mods/review-gate",
       "description": "The review gate as a tool.check function hook: every shell call decided in process, the script spawned only for a command that could commit, and a blocked commit put to you as a question rather than refused. Needs CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 and bin/review-gate installed; not compatible with Code Mode.",

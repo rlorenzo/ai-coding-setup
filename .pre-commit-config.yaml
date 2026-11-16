@@ -1,3 +1,9 @@
+# Pinned because pre-commit builds its own Node when the system one lives under
+# the home directory (nvm and similar), and an unpinned build takes the newest
+# release listed, which can be a pre-release nodeenv cannot parse.
+default_language_version:
+  node: lts
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -64,20 +70,6 @@ repos:
         # the sources land without the regenerated `.codex/skills/` beside it,
         # so triggering on the sources too would only rescan the same bytes.
         files: ^\.codex/skills/
-        stages: [pre-commit]
-
-      # Not one of the copies generated from `.claude/commands/` and not a
-      # SKILL.md directory, so it falls outside the recursive scan above and
-      # needs naming on its own.
-      - id: skillspector-agent
-        name: SkillSpector scan of the Explore agent
-        entry: skillspector
-        args: ["scan", "plugins/explore-agent/agents/Explore.md", "--no-llm"]
-        language: python
-        additional_dependencies:
-          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@ae1cdf2fdb98507cc07c21aabe3aab782041cf41"
-        pass_filenames: false
-        files: ^plugins/explore-agent/agents/
         stages: [pre-commit]
 
       - id: bats-unit-tests

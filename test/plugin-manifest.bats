@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for the Claude Code plugin manifests: the marketplace in
-# .claude-plugin/ and the three plugins it lists.
+# .claude-plugin/ and the plugins it lists.
 #
 # These guard the ways a manifest can drift from the repo without anything
 # complaining at install time: a marketplace entry pointing at a plugin that
@@ -62,13 +62,6 @@ plugin_sources() {
         run jq -e 'has("agents")' "$PROJECT_ROOT/$src/.claude-plugin/plugin.json"
         assert_failure
     done < <(plugin_sources)
-}
-
-@test "the explore-agent plugin has an agent for the convention to load" {
-    local count
-    count=$(find "$PROJECT_ROOT/plugins/explore-agent/agents" \
-        -maxdepth 1 -name '*.md' | wc -l)
-    [[ "$count" -gt 0 ]]
 }
 
 # Every command the root plugin ships comes from the directory the manifest
