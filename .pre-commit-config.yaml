@@ -1,3 +1,9 @@
+# Pinned because pre-commit builds its own Node when the system one lives under
+# the home directory (nvm and similar), and an unpinned build takes the newest
+# release listed, which can be a pre-release nodeenv cannot parse.
+default_language_version:
+  node: lts
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
