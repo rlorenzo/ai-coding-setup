@@ -1053,27 +1053,6 @@ multi_agent = true' "$config_file"
     fi
 }
 
-# ---- Copilot CLI settings configuration -------------------------------------
-
-configure_copilot_settings() {
-    local config_file="$HOME/.copilot/config.json"
-
-    echo ""
-    echo -e "${BOLD}── Copilot CLI Settings ──${NC}"
-
-    mkdir -p "$HOME/.copilot"
-    if [[ ! -f "$config_file" ]]; then
-        echo '{}' > "$config_file"
-    fi
-
-    if ! jq empty "$config_file" 2>/dev/null; then
-        print_warning "$HOME/.copilot/config.json is not valid JSON, skipping"
-        return
-    fi
-
-    echo -e "  ${DIM}No settings to configure${NC}"
-}
-
 # ---- gh agent skill installer ----------------------------------------------
 #
 # GitHub publishes upstream agent skills that teach coding agents how to drive
@@ -1807,7 +1786,6 @@ for tool in "${selected_tools[@]}"; do
             install_commands "Copilot CLI" \
                 ".copilot/skills" "$HOME/.copilot/skills" \
                 "skill" "$MD_MARKER" "/" "get_skill_description"
-            configure_copilot_settings
             configure_mcp "copilot" "Copilot CLI" "copilot"
             ;;
         antigravity)
