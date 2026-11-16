@@ -313,3 +313,41 @@ run_remove_gate() {
         "$HOME/.claude/settings.json"
     assert_success
 }
+
+# ---- review-gate mod vs Code Mode -----------------------------------------
+
+# Run install_review_gate_mod with a stub `claude` logging to $CLAUDE_LOG and
+# reporting the review-gate mod as installed; every prompt answers yes.
+run_gate_mod() {
+    setup_defs
+    mkdir -p "$TEST_TMPDIR/bin"
+    cat > "$TEST_TMPDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$CLAUDE_LOG"
+[[ "$1 $2" == "plugin list" ]] && echo "  ❯ review-gate@ai-coding-setup"
+exit 0
+STUB
+    chmod +x "$TEST_TMPDIR/bin/claude"
+    export CLAUDE_LOG="$TEST_TMPDIR/claude.log"
+    : > "$CLAUDE_LOG"
+    run env PATH="$TEST_TMPDIR/bin:$PATH" bash -c \
+        "source '$DEFS'; prompt_yes_no() { return 0; }; install_review_gate_mod /x/review-gate"
+}
+
+@test "gatemod: Code Mode on swaps an installed mod for the PreToolUse hook" {
+    seed_settings '{"env":{"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS":"1","CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"1"}}'
+    run_gate_mod
+    assert_failure
+    run cat "$CLAUDE_LOG"
+    assert_line "plugin uninstall review-gate"
+    refute_line --partial "plugin install"
+}
+
+@test "gatemod: Code Mode off still installs the mod" {
+    seed_settings '{"env":{"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS":"1","CLAUDE_CODE_EXPERIMENTAL_CODE_MODE":"0"}}'
+    run_gate_mod
+    assert_success
+    run cat "$CLAUDE_LOG"
+    assert_line --partial "plugin install review-gate@ai-coding-setup"
+    refute_line --partial "plugin uninstall"
+}
