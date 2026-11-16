@@ -66,20 +66,6 @@ repos:
         files: ^\.codex/skills/
         stages: [pre-commit]
 
-      # Not one of the copies generated from `.claude/commands/` and not a
-      # SKILL.md directory, so it falls outside the recursive scan above and
-      # needs naming on its own.
-      - id: skillspector-agent
-        name: SkillSpector scan of the Explore agent
-        entry: skillspector
-        args: ["scan", "plugins/explore-agent/agents/Explore.md", "--no-llm"]
-        language: python
-        additional_dependencies:
-          - "skillspector @ git+https://github.com/NVIDIA/skillspector.git@ae1cdf2fdb98507cc07c21aabe3aab782041cf41"
-        pass_filenames: false
-        files: ^plugins/explore-agent/agents/
-        stages: [pre-commit]
-
       - id: bats-unit-tests
         name: BATS unit tests
         entry: test/run

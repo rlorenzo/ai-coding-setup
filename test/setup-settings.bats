@@ -351,3 +351,28 @@ STUB
     assert_line --partial "plugin install review-gate@ai-coding-setup"
     refute_line --partial "plugin uninstall"
 }
+
+# ---- retired Explore overrides ---------------------------------------------
+
+@test "plugin install drops the Explore plugins earlier runs installed" {
+    setup_defs
+    mkdir -p "$TEST_TMPDIR/bin"
+    cat > "$TEST_TMPDIR/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$CLAUDE_LOG"
+if [[ "$1 $2" == "plugin list" ]]; then
+    echo "  ❯ explore-agent@ai-coding-setup"
+    echo "  ❯ explore-model@ai-coding-setup"
+fi
+exit 0
+STUB
+    chmod +x "$TEST_TMPDIR/bin/claude"
+    export CLAUDE_LOG="$TEST_TMPDIR/claude.log"
+    : > "$CLAUDE_LOG"
+    run env PATH="$TEST_TMPDIR/bin:$PATH" bash -c \
+        "source '$DEFS'; prompt_yes_no() { return 0; }; install_claude_plugin"
+    assert_success
+    run cat "$CLAUDE_LOG"
+    assert_line "plugin uninstall explore-agent"
+    assert_line "plugin uninstall explore-model"
+}
