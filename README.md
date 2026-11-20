@@ -9,7 +9,7 @@ The `setup` script and the review loops are Bash scripts that shell out to a han
 **Required** (the `setup` script exits early if any is missing):
 
 - [`git`](https://git-scm.com/), to clone the repo and drive the `git`-based commands
-- [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+, installed and authenticated (`/review-pr` uses the `gh pr edit --add-reviewer @copilot` special value added in 2.88.0 to re-request Copilot code review)
+- [GitHub CLI (`gh`)](https://cli.github.com/) 2.88.0+, installed and authenticated (`/review-pr` re-requests Copilot code review through `gh api` at Lite effort, since `gh pr edit --add-reviewer @copilot` has no effort option and runs at the costlier default)
 - [`jq`](https://jqlang.github.io/jq/), a JSON processor used to read and edit each tool's settings and MCP config files
 
 **Required only for optional steps:**
