@@ -125,11 +125,13 @@ Empty `stale` → re-run step 2b: unhandled body findings or a non-approving ver
 
 | Bot | Login | Re-trigger with |
 | --- | --- | --- |
-| Copilot | `copilot-pull-request-reviewer[bot]` | `gh pr edit {PR_NUMBER} --add-reviewer @copilot` |
+| Copilot | `copilot-pull-request-reviewer[bot]` | `gh api -X POST repos/{owner}/{repo}/pulls/{PR_NUMBER}/copilot-code-review -f review_effort=lite` |
 | CodeRabbit | `coderabbitai[bot]` | `gh pr comment {PR_NUMBER} --body "@coderabbitai review"` |
 | Greptile | `greptile-apps[bot]`, `greptileai[bot]` | `gh pr comment {PR_NUMBER} --body "@greptileai review"` |
 
-- Copilot takes the literal `@copilot` (`--add-reviewer Copilot` fails to resolve). Confirm via raw GraphQL `reviewRequests` only. **Never REST `requested_reviewers` (lists Users only) and never `gh pr view --json reviewRequests` (serializes only Users and Teams): in both, a requested Bot prints as empty and a successful request reads as failed.**
+- **Request Copilot at Lite effort unless the user asks for another level.** A review's cost in Copilot credits rises steeply with effort: one Balanced review of a mid-sized PR can use hundreds of credits, a whole month's allowance on some plans. `review_effort` takes `lite` or `balanced` (`max` and `adaptive` where enabled); an invalid value returns 422 with the accepted ones. Success prints `{"node_id": ..., "state": "PENDING"}`, and the finished review ends with `Review effort: Lite`.
+- **Never trigger Copilot with `gh pr edit --add-reviewer @copilot`.** It has no effort option, so it runs at the repository or organization default, which is Balanced unless an admin changed it. If the API call fails, report it and ask the user. Don't fall back to `--add-reviewer`.
+- To check whether a Copilot request is pending, use raw GraphQL `reviewRequests` only. **Never REST `requested_reviewers` (lists Users only) and never `gh pr view --json reviewRequests` (serializes only Users and Teams): in both, a requested Bot prints as empty and a successful request reads as failed.**
 
   ```bash
   gh api graphql \
